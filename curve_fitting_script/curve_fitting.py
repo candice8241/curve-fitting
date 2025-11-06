@@ -47,8 +47,9 @@ def fit_pseudo_voigt(xdata, ydata, p0=None):
     return popt, pcov
 
 # ---------- FITTING METHOD ----------
-fit_method = "pseudo"  # 设为 "voigt" 或 "pseudo"
+fit_method = "pseudo"  # Choose "voigt" or "pseudo"
 #fit_method = "voigt" 
+
 # ---------- Process a single file ----------
 def process_file(file_path, save_dir):
     try:
@@ -93,23 +94,21 @@ def process_file(file_path, save_dir):
         x_local = x[left:right]
         y_local = y[left:right]
         
-        # ----------- 背景减除：线性插值背景 ----------------
-        # 用边缘两端的平均值构建背景线
-        # 背景估计并减去（仅用于拟合）
+        # ----------- Background subtraction: linear interpolation ----------------
+        # Use the average values of the edges to construct the background line
+        # Estimate and subtract background (used only for fitting)
         bg_left = np.mean(y_local[:1])
         bg_right = np.mean(y_local[-1:])
         slope = (bg_right - bg_left) / (x_local[-1] - x_local[0])
         background = bg_left + slope * (x_local - x_local[0])
-        y_fit_input = y_local - background  # 用于拟合
-        
+        y_fit_input = y_local - background  # for fitting only
+
         x_smooth = np.linspace(x_local.min(), x_local.max(), 5000)
-        
 
         try:
             if fit_method == "voigt":
                 popt, _ = fit_voigt(x_local, y_fit_input)
                 y_fit_corrected = pseudo_voigt(x_smooth, *popt) + (bg_left + slope * (x_smooth - x_local[0]))
-                #y_fit = voigt(x_smooth, *popt)
                 fit_label = "Voigt Fit"
                 results.append({
                     "Peak #": idx+1,
@@ -121,10 +120,8 @@ def process_file(file_path, save_dir):
                 })
             else:
                 popt, _ = fit_pseudo_voigt(x_local, y_fit_input)
-                #y_fit = pseudo_voigt(x_smooth, *popt)
-                
                 y_fit_corrected = pseudo_voigt(x_smooth, *popt) + (bg_left + slope * (x_smooth - x_local[0]))
-                bg_line = bg_left + slope * (x_smooth - x_local[0])  # 背景线
+                bg_line = bg_left + slope * (x_smooth - x_local[0])  # background line
                 fit_label = "Pseudo-Voigt Fit"
                 results.append({
                     "Peak #": idx+1,
@@ -137,8 +134,7 @@ def process_file(file_path, save_dir):
 
             ax = axs[idx]
             ax.plot(x_local, y_local, color='black', label="Raw Data")
-            ax.plot(x_smooth, y_fit_corrected, color='#BA55D3', linestyle='--',linewidth=2, label=fit_label)
-            #ax.plot(x_smooth[::40], y_fit_corrected[::40], color='#BA55D3', marker='o', markerfacecolor='none',markersize=5,markeredgewidth=0.7,linestyle='None', label=fit_label)
+            ax.plot(x_smooth, y_fit_corrected, color='#BA55D3', linestyle='--', linewidth=2, label=fit_label)
             ax.plot(x_smooth, bg_line, color='#FF69B4', linestyle='-', linewidth=1.5, label="Background")
             ax.set_title(f"Peak {idx+1} @ {popt[1]:.3f}")
             ax.set_xlabel("2θ (degree)")
@@ -183,7 +179,7 @@ def main():
         df = process_file(fpath, save_dir)
         if df is not None:
             all_dfs.append(df)
-            all_dfs.append(pd.DataFrame([[""] * len(df.columns)], columns=df.columns))  # 空行隔开
+            all_dfs.append(pd.DataFrame([[""] * len(df.columns)], columns=df.columns))  # add blank line
 
     if all_dfs:
         combined_df = pd.concat(all_dfs, ignore_index=True)
