@@ -183,7 +183,7 @@ def main():
 
     if all_dfs:
         combined_df = pd.concat(all_dfs, ignore_index=True)
-        combined_csv_path = os.path.join(save_dir, "all_results_with_blank_lines.csv")
+        combined_csv_path = os.path.join(save_dir, "all_results.csv")
         combined_df.to_csv(combined_csv_path, index=False)
         print(f"\n📦 Total results saved to: {combined_csv_path}")
 
