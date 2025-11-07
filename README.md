@@ -3,7 +3,7 @@ A simple Python utility for detecting and fitting diffraction peaks using Voigt 
 # 🔬 Peak Fitting Tool for Dioptas `.xy` Data
 
 [![Python](https://img.shields.io/badge/Python-3.8+-blue?logo=python)](https://www.python.org/)
-[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey)]()
 [![SciPy](https://img.shields.io/badge/powered%20by-SciPy-orange)](https://scipy.org/)
 [![Made with ❤️](https://img.shields.io/badge/made%20with-%E2%9D%A4-pink)]()
