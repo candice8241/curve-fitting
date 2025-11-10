@@ -187,5 +187,47 @@ def main():
         combined_df.to_csv(combined_csv_path, index=False)
         print(f"\n📦 Total results saved to: {combined_csv_path}")
 
+def run_peak_fitting(
+    xy_folder=r"D:\HEPS\ID31\dioptas_data\Al0",
+    save_dir=None,
+    method="pseudo"
+):
+    """
+    Batch process .xy files for peak detection and fitting.
+
+    Args:
+        xy_folder (str): Folder containing .xy files
+        save_dir (str): Folder to save results (default: xy_folder/fit_output)
+        method (str): 'pseudo' or 'voigt'
+    """
+
+    global fit_method
+    fit_method = method.lower()
+    assert fit_method in ["voigt", "pseudo"], "fit_method must be 'voigt' or 'pseudo'"
+
+    if save_dir is None:
+        save_dir = os.path.join(xy_folder, "fit_output")
+    os.makedirs(save_dir, exist_ok=True)
+
+    files = [f for f in os.listdir(xy_folder) if f.endswith(".xy")]
+    files.sort()
+
+    all_dfs = []
+    for fname in files:
+        fpath = os.path.join(xy_folder, fname)
+        df = process_file(fpath, save_dir)
+        if df is not None:
+            all_dfs.append(df)
+            all_dfs.append(pd.DataFrame([[""] * len(df.columns)], columns=df.columns))
+
+    if all_dfs:
+        combined_df = pd.concat(all_dfs, ignore_index=True)
+        combined_csv_path = os.path.join(save_dir, "all_results.csv")
+        combined_df.to_csv(combined_csv_path, index=False)
+        print(f"\n📦 Total results saved to: {combined_csv_path}")
+    else:
+        print("⚠️ No results generated.")
+
+
 if __name__ == "__main__":
     main()
