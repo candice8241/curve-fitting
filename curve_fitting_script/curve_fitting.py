@@ -1,5 +1,12 @@
 # -*- coding: utf-8 -*-
 """
+Created on Mon Nov 10 09:45:31 2025
+
+@author: 16961
+"""
+
+# -*- coding: utf-8 -*-
+"""
 Created on Thu Nov  6 10:49:55 2025
 @author: candicewang928@gmail.com
 """
@@ -186,46 +193,6 @@ def main():
         combined_csv_path = os.path.join(save_dir, "all_results.csv")
         combined_df.to_csv(combined_csv_path, index=False)
         print(f"\n📦 Total results saved to: {combined_csv_path}")
-
-def run_peak_fitting(xy_folder, save_dir=None, method="pseudo", show_plot=False):
-    """
-    Batch peak fitting for multiple .xy files.
-
-    Args:
-        xy_folder (str): Directory containing .xy files
-        save_dir (str): Output directory for plots and results (default: xy_folder/fit_output)
-        method (str): 'pseudo' or 'voigt'
-        show_plot (bool): Whether to show matplotlib plot window (default: False)
-    """
-    method = method.lower()
-    assert method in ["pseudo", "voigt"], "method must be 'pseudo' or 'voigt'"
-
-    if save_dir is None:
-        save_dir = os.path.join(xy_folder, "fit_output")
-    os.makedirs(save_dir, exist_ok=True)
-
-    files = [f for f in os.listdir(xy_folder) if f.endswith(".xy")]
-    files.sort()
-
-    all_dfs = []
-    for fname in files:
-        fpath = os.path.join(xy_folder, fname)
-        df = process_file(fpath, save_dir, method=method)
-        if df is not None:
-            all_dfs.append(df)
-            all_dfs.append(pd.DataFrame([[""] * len(df.columns)], columns=df.columns))  # blank line
-
-        if show_plot:
-            plt.show()
-
-    if all_dfs:
-        combined_df = pd.concat(all_dfs, ignore_index=True)
-        combined_csv_path = os.path.join(save_dir, "all_results.csv")
-        combined_df.to_csv(combined_csv_path, index=False)
-        print(f"\n📦 Total results saved to: {combined_csv_path}")
-    else:
-        print("⚠️ No peak results were generated.")
-
 
 if __name__ == "__main__":
     main()
