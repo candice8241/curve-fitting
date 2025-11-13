@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Birch-Murnaghan方程拟合PV曲线
-用于拟合压力-体积数据并计算体模量相关参数
+Birch-Murnaghan Equation Fitting for Pressure-Volume Curves
+For fitting pressure-volume data and calculating bulk modulus parameters
 @author: candicewang928@gmail.com
 Created: 2025-11-13
 """
@@ -12,22 +12,30 @@ import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
 import os
 
-# 设置中文字体支持
-plt.rcParams['font.sans-serif'] = ['Arial Unicode MS', 'SimHei', 'DejaVu Sans']
+# Configure matplotlib to properly display special characters and symbols
+plt.rcParams['font.family'] = 'DejaVu Sans'
 plt.rcParams['axes.unicode_minus'] = False
+# Enable proper rendering of subscripts and superscripts
+plt.rcParams['mathtext.default'] = 'regular'
 
 
 def birch_murnaghan_2nd(V, V0, B0):
     """
-    二阶Birch-Murnaghan状态方程
+    2nd order Birch-Murnaghan Equation of State
 
-    参数:
-    V: 体积 (Å³/atom)
-    V0: 零压体积 (Å³/atom)
-    B0: 零压体模量 (GPa)
+    Parameters:
+    -----------
+    V : float or array
+        Volume (Å³/atom)
+    V0 : float
+        Zero-pressure volume (Å³/atom)
+    B0 : float
+        Zero-pressure bulk modulus (GPa)
 
-    返回:
-    P: 压力 (GPa)
+    Returns:
+    --------
+    P : float or array
+        Pressure (GPa)
     """
     eta = (V0 / V) ** (1/3)
     P = 3 * B0 / 2 * (eta**7 - eta**5)
@@ -36,16 +44,23 @@ def birch_murnaghan_2nd(V, V0, B0):
 
 def birch_murnaghan_3rd(V, V0, B0, B0_prime):
     """
-    三阶Birch-Murnaghan状态方程
+    3rd order Birch-Murnaghan Equation of State
 
-    参数:
-    V: 体积 (Å³/atom)
-    V0: 零压体积 (Å³/atom)
-    B0: 零压体模量 (GPa)
-    B0_prime: 体模量一阶导数 (无量纲)
+    Parameters:
+    -----------
+    V : float or array
+        Volume (Å³/atom)
+    V0 : float
+        Zero-pressure volume (Å³/atom)
+    B0 : float
+        Zero-pressure bulk modulus (GPa)
+    B0_prime : float
+        First pressure derivative of bulk modulus (dimensionless)
 
-    返回:
-    P: 压力 (GPa)
+    Returns:
+    --------
+    P : float or array
+        Pressure (GPa)
     """
     eta = (V0 / V) ** (1/3)
     P = 3 * B0 / 2 * (eta**7 - eta**5) * (1 + 0.75 * (B0_prime - 4) * (eta**2 - 1))
@@ -54,27 +69,33 @@ def birch_murnaghan_3rd(V, V0, B0, B0_prime):
 
 def fit_bm_equations(V_data, P_data, phase_name=""):
     """
-    对给定的PV数据进行2阶和3阶BM方程拟合
+    Fit 2nd and 3rd order Birch-Murnaghan equations to P-V data
 
-    参数:
-    V_data: 体积数据数组
-    P_data: 压力数据数组
-    phase_name: 相的名称（用于输出）
+    Parameters:
+    -----------
+    V_data : array
+        Volume data array
+    P_data : array
+        Pressure data array
+    phase_name : str
+        Phase name for output display
 
-    返回:
-    results: 包含拟合参数和统计信息的字典
+    Returns:
+    --------
+    results : dict
+        Dictionary containing fitting parameters and statistics
     """
     results = {}
 
-    # 初始猜测值
-    V0_guess = np.max(V_data) * 1.02  # 零压体积略大于最大体积
-    B0_guess = 150  # 体模量初始猜测 (GPa)
-    B0_prime_guess = 4.0  # 体模量一阶导初始猜测
+    # Initial guess values
+    V0_guess = np.max(V_data) * 1.02  # Zero-pressure volume slightly larger than max volume
+    B0_guess = 150  # Initial guess for bulk modulus (GPa)
+    B0_prime_guess = 4.0  # Initial guess for first derivative of bulk modulus
 
-    # 2阶BM方程拟合
-    # 设置合理的参数边界以避免过拟合
-    # V0: 最大体积的0.8-1.3倍
-    # B0: 50-500 GPa（涵盖大多数材料）
+    # ==================== 2nd order BM equation fitting ====================
+    # Set reasonable parameter bounds to avoid overfitting
+    # V0: 0.8-1.3 times the maximum experimental volume
+    # B0: 50-500 GPa (covers most materials)
     bounds_2nd = ([np.max(V_data) * 0.8, 50],
                   [np.max(V_data) * 1.3, 500])
 
@@ -91,7 +112,7 @@ def fit_bm_equations(V_data, P_data, phase_name=""):
         V0_2nd, B0_2nd = popt_2nd
         perr_2nd = np.sqrt(np.diag(pcov_2nd))
 
-        # 计算拟合残差和R²
+        # Calculate fitting residuals and R²
         P_fit_2nd = birch_murnaghan_2nd(V_data, *popt_2nd)
         residuals_2nd = P_data - P_fit_2nd
         ss_res_2nd = np.sum(residuals_2nd**2)
@@ -104,7 +125,7 @@ def fit_bm_equations(V_data, P_data, phase_name=""):
             'V0_err': perr_2nd[0],
             'B0': B0_2nd,
             'B0_err': perr_2nd[1],
-            'B0_prime': 4.0,  # 2阶方程固定为4
+            'B0_prime': 4.0,  # Fixed to 4 for 2nd order equation
             'B0_prime_err': 0,
             'R_squared': r_squared_2nd,
             'RMSE': rmse_2nd,
@@ -112,23 +133,23 @@ def fit_bm_equations(V_data, P_data, phase_name=""):
         }
 
         print(f"\n{'='*60}")
-        print(f"{phase_name} - 二阶Birch-Murnaghan拟合结果:")
+        print(f"{phase_name} - 2nd Order Birch-Murnaghan Fitting Results:")
         print(f"{'='*60}")
         print(f"V₀ = {V0_2nd:.4f} ± {perr_2nd[0]:.4f} Å³/atom")
         print(f"B₀ = {B0_2nd:.2f} ± {perr_2nd[1]:.2f} GPa")
-        print(f"B₀' = 4.0 (固定)")
+        print(f"B₀' = 4.0 (fixed)")
         print(f"R² = {r_squared_2nd:.6f}")
         print(f"RMSE = {rmse_2nd:.4f} GPa")
 
     except Exception as e:
-        print(f"⚠️ {phase_name} - 二阶BM拟合失败: {e}")
+        print(f"⚠️ {phase_name} - 2nd order BM fitting failed: {e}")
         results['2nd_order'] = None
 
-    # 3阶BM方程拟合
-    # 设置合理的参数边界
-    # V0: 最大体积的0.8-1.3倍
+    # ==================== 3rd order BM equation fitting ====================
+    # Set reasonable parameter bounds
+    # V0: 0.8-1.3 times the maximum experimental volume
     # B0: 50-500 GPa
-    # B0': 2.5-6.5（基于文献值，大多数材料在3-6之间）
+    # B0': 2.5-6.5 (based on literature values, most materials between 3-6)
     bounds_3rd = ([np.max(V_data) * 0.8, 50, 2.5],
                   [np.max(V_data) * 1.3, 500, 6.5])
 
@@ -145,7 +166,7 @@ def fit_bm_equations(V_data, P_data, phase_name=""):
         V0_3rd, B0_3rd, B0_prime_3rd = popt_3rd
         perr_3rd = np.sqrt(np.diag(pcov_3rd))
 
-        # 计算拟合残差和R²
+        # Calculate fitting residuals and R²
         P_fit_3rd = birch_murnaghan_3rd(V_data, *popt_3rd)
         residuals_3rd = P_data - P_fit_3rd
         ss_res_3rd = np.sum(residuals_3rd**2)
@@ -166,7 +187,7 @@ def fit_bm_equations(V_data, P_data, phase_name=""):
         }
 
         print(f"\n{'='*60}")
-        print(f"{phase_name} - 三阶Birch-Murnaghan拟合结果:")
+        print(f"{phase_name} - 3rd Order Birch-Murnaghan Fitting Results:")
         print(f"{'='*60}")
         print(f"V₀ = {V0_3rd:.4f} ± {perr_3rd[0]:.4f} Å³/atom")
         print(f"B₀ = {B0_3rd:.2f} ± {perr_3rd[1]:.2f} GPa")
@@ -175,7 +196,7 @@ def fit_bm_equations(V_data, P_data, phase_name=""):
         print(f"RMSE = {rmse_3rd:.4f} GPa")
 
     except Exception as e:
-        print(f"⚠️ {phase_name} - 三阶BM拟合失败: {e}")
+        print(f"⚠️ {phase_name} - 3rd order BM fitting failed: {e}")
         results['3rd_order'] = None
 
     return results
@@ -184,126 +205,132 @@ def fit_bm_equations(V_data, P_data, phase_name=""):
 def plot_pv_curves(V_orig, P_orig, V_new, P_new,
                    results_orig, results_new, save_dir):
     """
-    绘制PV曲线和拟合结果
+    Plot P-V curves and fitting results
 
-    参数:
-    V_orig, P_orig: 原相的体积和压力数据
-    V_new, P_new: 新相的体积和压力数据
-    results_orig, results_new: 拟合结果
-    save_dir: 保存图片的目录
+    Parameters:
+    -----------
+    V_orig, P_orig : array
+        Volume and pressure data for original phase
+    V_new, P_new : array
+        Volume and pressure data for new phase
+    results_orig, results_new : dict
+        Fitting results
+    save_dir : str
+        Directory to save the figure
     """
     fig, axes = plt.subplots(2, 2, figsize=(16, 12))
-    fig.suptitle('Birch-Murnaghan方程拟合PV曲线', fontsize=16, fontweight='bold')
+    fig.suptitle('Birch-Murnaghan Equation Fitting for P-V Curves',
+                 fontsize=16, fontweight='bold')
 
-    # 原相 - 2阶BM
+    # Original phase - 2nd order BM
     ax = axes[0, 0]
     ax.scatter(V_orig, P_orig, s=80, c='blue', marker='o',
-               label='实验数据 (原相)', alpha=0.7, edgecolors='black')
+               label='Experimental Data (Original Phase)', alpha=0.7, edgecolors='black')
     if results_orig['2nd_order'] is not None:
         V_fit = np.linspace(V_orig.min()*0.95, V_orig.max()*1.05, 200)
         P_fit = birch_murnaghan_2nd(V_fit,
                                      results_orig['2nd_order']['V0'],
                                      results_orig['2nd_order']['B0'])
-        ax.plot(V_fit, P_fit, 'r-', linewidth=2.5, label='2阶BM拟合', alpha=0.8)
+        ax.plot(V_fit, P_fit, 'r-', linewidth=2.5, label='2nd Order BM Fit', alpha=0.8)
 
-        # 添加拟合参数文本
-        textstr = f"V₀ = {results_orig['2nd_order']['V0']:.4f} Ų/atom\n"
-        textstr += f"B₀ = {results_orig['2nd_order']['B0']:.2f} GPa\n"
-        textstr += f"B₀' = 4.0 (固定)\n"
-        textstr += f"R² = {results_orig['2nd_order']['R_squared']:.6f}"
+        # Add fitting parameters text
+        textstr = f"$V_0$ = {results_orig['2nd_order']['V0']:.4f} Å³/atom\n"
+        textstr += f"$B_0$ = {results_orig['2nd_order']['B0']:.2f} GPa\n"
+        textstr += f"$B_0'$ = 4.0 (fixed)\n"
+        textstr += f"$R^2$ = {results_orig['2nd_order']['R_squared']:.6f}"
         ax.text(0.05, 0.95, textstr, transform=ax.transAxes, fontsize=10,
                 verticalalignment='top', bbox=dict(boxstyle='round',
                 facecolor='wheat', alpha=0.5))
 
-    ax.set_xlabel('体积 V (Ų/atom)', fontsize=12)
-    ax.set_ylabel('压力 P (GPa)', fontsize=12)
-    ax.set_title('原相 - 二阶BM方程', fontsize=13, fontweight='bold')
+    ax.set_xlabel('Volume V (Å³/atom)', fontsize=12)
+    ax.set_ylabel('Pressure P (GPa)', fontsize=12)
+    ax.set_title('Original Phase - 2nd Order BM Equation', fontsize=13, fontweight='bold')
     ax.legend(loc='upper right', fontsize=10)
     ax.grid(True, alpha=0.3, linestyle='--')
 
-    # 原相 - 3阶BM
+    # Original phase - 3rd order BM
     ax = axes[0, 1]
     ax.scatter(V_orig, P_orig, s=80, c='blue', marker='o',
-               label='实验数据 (原相)', alpha=0.7, edgecolors='black')
+               label='Experimental Data (Original Phase)', alpha=0.7, edgecolors='black')
     if results_orig['3rd_order'] is not None:
         V_fit = np.linspace(V_orig.min()*0.95, V_orig.max()*1.05, 200)
         P_fit = birch_murnaghan_3rd(V_fit,
                                      results_orig['3rd_order']['V0'],
                                      results_orig['3rd_order']['B0'],
                                      results_orig['3rd_order']['B0_prime'])
-        ax.plot(V_fit, P_fit, 'g-', linewidth=2.5, label='3阶BM拟合', alpha=0.8)
+        ax.plot(V_fit, P_fit, 'g-', linewidth=2.5, label='3rd Order BM Fit', alpha=0.8)
 
-        textstr = f"V₀ = {results_orig['3rd_order']['V0']:.4f} Ų/atom\n"
-        textstr += f"B₀ = {results_orig['3rd_order']['B0']:.2f} GPa\n"
-        textstr += f"B₀' = {results_orig['3rd_order']['B0_prime']:.3f}\n"
-        textstr += f"R² = {results_orig['3rd_order']['R_squared']:.6f}"
+        textstr = f"$V_0$ = {results_orig['3rd_order']['V0']:.4f} Å³/atom\n"
+        textstr += f"$B_0$ = {results_orig['3rd_order']['B0']:.2f} GPa\n"
+        textstr += f"$B_0'$ = {results_orig['3rd_order']['B0_prime']:.3f}\n"
+        textstr += f"$R^2$ = {results_orig['3rd_order']['R_squared']:.6f}"
         ax.text(0.05, 0.95, textstr, transform=ax.transAxes, fontsize=10,
                 verticalalignment='top', bbox=dict(boxstyle='round',
                 facecolor='lightgreen', alpha=0.5))
 
-    ax.set_xlabel('体积 V (Ų/atom)', fontsize=12)
-    ax.set_ylabel('压力 P (GPa)', fontsize=12)
-    ax.set_title('原相 - 三阶BM方程', fontsize=13, fontweight='bold')
+    ax.set_xlabel('Volume V (Å³/atom)', fontsize=12)
+    ax.set_ylabel('Pressure P (GPa)', fontsize=12)
+    ax.set_title('Original Phase - 3rd Order BM Equation', fontsize=13, fontweight='bold')
     ax.legend(loc='upper right', fontsize=10)
     ax.grid(True, alpha=0.3, linestyle='--')
 
-    # 新相 - 2阶BM
+    # New phase - 2nd order BM
     ax = axes[1, 0]
     ax.scatter(V_new, P_new, s=80, c='red', marker='s',
-               label='实验数据 (新相)', alpha=0.7, edgecolors='black')
+               label='Experimental Data (New Phase)', alpha=0.7, edgecolors='black')
     if results_new['2nd_order'] is not None:
         V_fit = np.linspace(V_new.min()*0.95, V_new.max()*1.05, 200)
         P_fit = birch_murnaghan_2nd(V_fit,
                                      results_new['2nd_order']['V0'],
                                      results_new['2nd_order']['B0'])
-        ax.plot(V_fit, P_fit, 'r-', linewidth=2.5, label='2阶BM拟合', alpha=0.8)
+        ax.plot(V_fit, P_fit, 'r-', linewidth=2.5, label='2nd Order BM Fit', alpha=0.8)
 
-        textstr = f"V₀ = {results_new['2nd_order']['V0']:.4f} Ų/atom\n"
-        textstr += f"B₀ = {results_new['2nd_order']['B0']:.2f} GPa\n"
-        textstr += f"B₀' = 4.0 (固定)\n"
-        textstr += f"R² = {results_new['2nd_order']['R_squared']:.6f}"
+        textstr = f"$V_0$ = {results_new['2nd_order']['V0']:.4f} Å³/atom\n"
+        textstr += f"$B_0$ = {results_new['2nd_order']['B0']:.2f} GPa\n"
+        textstr += f"$B_0'$ = 4.0 (fixed)\n"
+        textstr += f"$R^2$ = {results_new['2nd_order']['R_squared']:.6f}"
         ax.text(0.05, 0.95, textstr, transform=ax.transAxes, fontsize=10,
                 verticalalignment='top', bbox=dict(boxstyle='round',
                 facecolor='wheat', alpha=0.5))
 
-    ax.set_xlabel('体积 V (Ų/atom)', fontsize=12)
-    ax.set_ylabel('压力 P (GPa)', fontsize=12)
-    ax.set_title('新相 - 二阶BM方程', fontsize=13, fontweight='bold')
+    ax.set_xlabel('Volume V (Å³/atom)', fontsize=12)
+    ax.set_ylabel('Pressure P (GPa)', fontsize=12)
+    ax.set_title('New Phase - 2nd Order BM Equation', fontsize=13, fontweight='bold')
     ax.legend(loc='upper right', fontsize=10)
     ax.grid(True, alpha=0.3, linestyle='--')
 
-    # 新相 - 3阶BM
+    # New phase - 3rd order BM
     ax = axes[1, 1]
     ax.scatter(V_new, P_new, s=80, c='red', marker='s',
-               label='实验数据 (新相)', alpha=0.7, edgecolors='black')
+               label='Experimental Data (New Phase)', alpha=0.7, edgecolors='black')
     if results_new['3rd_order'] is not None:
         V_fit = np.linspace(V_new.min()*0.95, V_new.max()*1.05, 200)
         P_fit = birch_murnaghan_3rd(V_fit,
                                      results_new['3rd_order']['V0'],
                                      results_new['3rd_order']['B0'],
                                      results_new['3rd_order']['B0_prime'])
-        ax.plot(V_fit, P_fit, 'g-', linewidth=2.5, label='3阶BM拟合', alpha=0.8)
+        ax.plot(V_fit, P_fit, 'g-', linewidth=2.5, label='3rd Order BM Fit', alpha=0.8)
 
-        textstr = f"V₀ = {results_new['3rd_order']['V0']:.4f} Ų/atom\n"
-        textstr += f"B₀ = {results_new['3rd_order']['B0']:.2f} GPa\n"
-        textstr += f"B₀' = {results_new['3rd_order']['B0_prime']:.3f}\n"
-        textstr += f"R² = {results_new['3rd_order']['R_squared']:.6f}"
+        textstr = f"$V_0$ = {results_new['3rd_order']['V0']:.4f} Å³/atom\n"
+        textstr += f"$B_0$ = {results_new['3rd_order']['B0']:.2f} GPa\n"
+        textstr += f"$B_0'$ = {results_new['3rd_order']['B0_prime']:.3f}\n"
+        textstr += f"$R^2$ = {results_new['3rd_order']['R_squared']:.6f}"
         ax.text(0.05, 0.95, textstr, transform=ax.transAxes, fontsize=10,
                 verticalalignment='top', bbox=dict(boxstyle='round',
                 facecolor='lightgreen', alpha=0.5))
 
-    ax.set_xlabel('体积 V (Ų/atom)', fontsize=12)
-    ax.set_ylabel('压力 P (GPa)', fontsize=12)
-    ax.set_title('新相 - 三阶BM方程', fontsize=13, fontweight='bold')
+    ax.set_xlabel('Volume V (Å³/atom)', fontsize=12)
+    ax.set_ylabel('Pressure P (GPa)', fontsize=12)
+    ax.set_title('New Phase - 3rd Order BM Equation', fontsize=13, fontweight='bold')
     ax.legend(loc='upper right', fontsize=10)
     ax.grid(True, alpha=0.3, linestyle='--')
 
     plt.tight_layout()
 
-    # 保存图片
+    # Save figure
     output_path = os.path.join(save_dir, 'BM_fitting_results.png')
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
-    print(f"\n✅ PV曲线图已保存至: {output_path}")
+    print(f"\n✅ P-V curve figure saved to: {output_path}")
 
     plt.show()
 
@@ -311,71 +338,76 @@ def plot_pv_curves(V_orig, P_orig, V_new, P_new,
 def plot_residuals(V_orig, P_orig, V_new, P_new,
                    results_orig, results_new, save_dir):
     """
-    绘制拟合残差图
+    Plot fitting residuals analysis
 
-    参数:
-    V_orig, P_orig: 原相的体积和压力数据
-    V_new, P_new: 新相的体积和压力数据
-    results_orig, results_new: 拟合结果
-    save_dir: 保存图片的目录
+    Parameters:
+    -----------
+    V_orig, P_orig : array
+        Volume and pressure data for original phase
+    V_new, P_new : array
+        Volume and pressure data for new phase
+    results_orig, results_new : dict
+        Fitting results
+    save_dir : str
+        Directory to save the figure
     """
     fig, axes = plt.subplots(2, 2, figsize=(16, 10))
-    fig.suptitle('拟合残差分析', fontsize=16, fontweight='bold')
+    fig.suptitle('Fitting Residuals Analysis', fontsize=16, fontweight='bold')
 
-    # 原相 - 2阶BM残差
+    # Original phase - 2nd order BM residuals
     ax = axes[0, 0]
     if results_orig['2nd_order'] is not None:
         residuals = P_orig - results_orig['2nd_order']['fitted_P']
         ax.scatter(V_orig, residuals, s=60, c='blue', marker='o', alpha=0.7)
         ax.axhline(y=0, color='r', linestyle='--', linewidth=2)
-        ax.set_xlabel('体积 V (Ų/atom)', fontsize=11)
-        ax.set_ylabel('残差 (GPa)', fontsize=11)
-        ax.set_title('原相 - 二阶BM残差', fontsize=12, fontweight='bold')
+        ax.set_xlabel('Volume V (Å³/atom)', fontsize=11)
+        ax.set_ylabel('Residuals (GPa)', fontsize=11)
+        ax.set_title('Original Phase - 2nd Order BM Residuals', fontsize=12, fontweight='bold')
         ax.grid(True, alpha=0.3)
         textstr = f"RMSE = {results_orig['2nd_order']['RMSE']:.4f} GPa"
         ax.text(0.05, 0.95, textstr, transform=ax.transAxes, fontsize=10,
                 verticalalignment='top', bbox=dict(boxstyle='round',
                 facecolor='wheat', alpha=0.5))
 
-    # 原相 - 3阶BM残差
+    # Original phase - 3rd order BM residuals
     ax = axes[0, 1]
     if results_orig['3rd_order'] is not None:
         residuals = P_orig - results_orig['3rd_order']['fitted_P']
         ax.scatter(V_orig, residuals, s=60, c='blue', marker='o', alpha=0.7)
         ax.axhline(y=0, color='g', linestyle='--', linewidth=2)
-        ax.set_xlabel('体积 V (Ų/atom)', fontsize=11)
-        ax.set_ylabel('残差 (GPa)', fontsize=11)
-        ax.set_title('原相 - 三阶BM残差', fontsize=12, fontweight='bold')
+        ax.set_xlabel('Volume V (Å³/atom)', fontsize=11)
+        ax.set_ylabel('Residuals (GPa)', fontsize=11)
+        ax.set_title('Original Phase - 3rd Order BM Residuals', fontsize=12, fontweight='bold')
         ax.grid(True, alpha=0.3)
         textstr = f"RMSE = {results_orig['3rd_order']['RMSE']:.4f} GPa"
         ax.text(0.05, 0.95, textstr, transform=ax.transAxes, fontsize=10,
                 verticalalignment='top', bbox=dict(boxstyle='round',
                 facecolor='lightgreen', alpha=0.5))
 
-    # 新相 - 2阶BM残差
+    # New phase - 2nd order BM residuals
     ax = axes[1, 0]
     if results_new['2nd_order'] is not None:
         residuals = P_new - results_new['2nd_order']['fitted_P']
         ax.scatter(V_new, residuals, s=60, c='red', marker='s', alpha=0.7)
         ax.axhline(y=0, color='r', linestyle='--', linewidth=2)
-        ax.set_xlabel('体积 V (Ų/atom)', fontsize=11)
-        ax.set_ylabel('残差 (GPa)', fontsize=11)
-        ax.set_title('新相 - 二阶BM残差', fontsize=12, fontweight='bold')
+        ax.set_xlabel('Volume V (Å³/atom)', fontsize=11)
+        ax.set_ylabel('Residuals (GPa)', fontsize=11)
+        ax.set_title('New Phase - 2nd Order BM Residuals', fontsize=12, fontweight='bold')
         ax.grid(True, alpha=0.3)
         textstr = f"RMSE = {results_new['2nd_order']['RMSE']:.4f} GPa"
         ax.text(0.05, 0.95, textstr, transform=ax.transAxes, fontsize=10,
                 verticalalignment='top', bbox=dict(boxstyle='round',
                 facecolor='wheat', alpha=0.5))
 
-    # 新相 - 3阶BM残差
+    # New phase - 3rd order BM residuals
     ax = axes[1, 1]
     if results_new['3rd_order'] is not None:
         residuals = P_new - results_new['3rd_order']['fitted_P']
         ax.scatter(V_new, residuals, s=60, c='red', marker='s', alpha=0.7)
         ax.axhline(y=0, color='g', linestyle='--', linewidth=2)
-        ax.set_xlabel('体积 V (Ų/atom)', fontsize=11)
-        ax.set_ylabel('残差 (GPa)', fontsize=11)
-        ax.set_title('新相 - 三阶BM残差', fontsize=12, fontweight='bold')
+        ax.set_xlabel('Volume V (Å³/atom)', fontsize=11)
+        ax.set_ylabel('Residuals (GPa)', fontsize=11)
+        ax.set_title('New Phase - 3rd Order BM Residuals', fontsize=12, fontweight='bold')
         ax.grid(True, alpha=0.3)
         textstr = f"RMSE = {results_new['3rd_order']['RMSE']:.4f} GPa"
         ax.text(0.05, 0.95, textstr, transform=ax.transAxes, fontsize=10,
@@ -386,35 +418,44 @@ def plot_residuals(V_orig, P_orig, V_new, P_new,
 
     output_path = os.path.join(save_dir, 'BM_fitting_residuals.png')
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
-    print(f"✅ 残差图已保存至: {output_path}")
+    print(f"✅ Residuals figure saved to: {output_path}")
 
     plt.show()
 
 
 def save_results_to_csv(results_orig, results_new, save_dir):
     """
-    将拟合结果保存为CSV文件
+    Save fitting results to CSV file
 
-    参数:
-    results_orig: 原相拟合结果
-    results_new: 新相拟合结果
-    save_dir: 保存目录
+    Parameters:
+    -----------
+    results_orig : dict
+        Fitting results for original phase
+    results_new : dict
+        Fitting results for new phase
+    save_dir : str
+        Directory to save the CSV file
+
+    Returns:
+    --------
+    df_summary : DataFrame
+        Summary dataframe of fitting parameters
     """
-    # 创建结果汇总表
+    # Create summary table
     summary_data = []
 
-    for phase_name, results in [('原相', results_orig), ('新相', results_new)]:
+    for phase_name, results in [('Original Phase', results_orig), ('New Phase', results_new)]:
         for order in ['2nd_order', '3rd_order']:
             if results[order] is not None:
                 row = {
-                    '相': phase_name,
-                    '拟合阶数': '2阶' if order == '2nd_order' else '3阶',
-                    'V₀ (Ų/atom)': f"{results[order]['V0']:.6f}",
-                    'V₀误差': f"{results[order]['V0_err']:.6f}",
+                    'Phase': phase_name,
+                    'Fitting Order': '2nd Order' if order == '2nd_order' else '3rd Order',
+                    'V₀ (Å³/atom)': f"{results[order]['V0']:.6f}",
+                    'V₀ Error': f"{results[order]['V0_err']:.6f}",
                     'B₀ (GPa)': f"{results[order]['B0']:.4f}",
-                    'B₀误差': f"{results[order]['B0_err']:.4f}",
+                    'B₀ Error': f"{results[order]['B0_err']:.4f}",
                     "B₀'": f"{results[order]['B0_prime']:.6f}",
-                    "B₀'误差": f"{results[order]['B0_prime_err']:.6f}",
+                    "B₀' Error": f"{results[order]['B0_prime_err']:.6f}",
                     'R²': f"{results[order]['R_squared']:.8f}",
                     'RMSE (GPa)': f"{results[order]['RMSE']:.6f}"
                 }
@@ -424,61 +465,61 @@ def save_results_to_csv(results_orig, results_new, save_dir):
 
     output_path = os.path.join(save_dir, 'BM_fitting_parameters.csv')
     df_summary.to_csv(output_path, index=False, encoding='utf-8-sig')
-    print(f"✅ 拟合参数已保存至: {output_path}")
+    print(f"✅ Fitting parameters saved to: {output_path}")
 
     return df_summary
 
 
 def main():
     """
-    主函数：读取数据、拟合、绘图、保存结果
+    Main function: Read data, fit, plot, and save results
     """
     print("\n" + "="*80)
-    print("Birch-Murnaghan方程拟合PV曲线程序")
+    print("Birch-Murnaghan Equation Fitting for P-V Curves")
     print("="*80)
 
-    # 设置数据路径（请根据实际情况修改）
-    data_dir = r"D:\HEPS\ID31\dioptas_data\Al0"  # 修改为你的数据目录
+    # Set data paths (modify according to your actual data directory)
+    data_dir = r"D:\HEPS\ID31\dioptas_data\Al0"  # Modify to your data directory
     orig_file = os.path.join(data_dir, "all_results_original_peaks_lattice.csv")
     new_file = os.path.join(data_dir, "all_results_new_peaks_lattice.csv")
 
-    # 创建输出目录
+    # Create output directory
     save_dir = os.path.join(data_dir, "BM_fitting_output")
     os.makedirs(save_dir, exist_ok=True)
 
-    # 读取数据
-    print(f"\n📂 正在读取数据文件...")
-    print(f"   原相数据: {orig_file}")
-    print(f"   新相数据: {new_file}")
+    # Read data
+    print(f"\n📂 Reading data files...")
+    print(f"   Original phase data: {orig_file}")
+    print(f"   New phase data: {new_file}")
 
     try:
         df_orig = pd.read_csv(orig_file)
         df_new = pd.read_csv(new_file)
-        print("✅ 数据读取成功!")
+        print("✅ Data loaded successfully!")
     except FileNotFoundError as e:
-        print(f"❌ 错误: 找不到数据文件")
-        print(f"   请确保以下文件存在:")
+        print(f"❌ Error: Data files not found")
+        print(f"   Please ensure the following files exist:")
         print(f"   - {orig_file}")
         print(f"   - {new_file}")
-        print(f"\n💡 提示: 请修改 main() 函数中的 data_dir 变量为你的实际数据目录")
+        print(f"\n💡 Tip: Please modify the data_dir variable in main() function to your actual data directory")
         return
 
-    # 检查必要的列是否存在
+    # Check required columns
     required_columns = ['V_atomic', 'Pressure (GPa)']
     for col in required_columns:
         if col not in df_orig.columns or col not in df_new.columns:
-            print(f"❌ 错误: 数据文件中缺少必要的列 '{col}'")
-            print(f"   原相列名: {df_orig.columns.tolist()}")
-            print(f"   新相列名: {df_new.columns.tolist()}")
+            print(f"❌ Error: Required column '{col}' missing in data files")
+            print(f"   Original phase columns: {df_orig.columns.tolist()}")
+            print(f"   New phase columns: {df_new.columns.tolist()}")
             return
 
-    # 提取数据并移除空值
+    # Extract data and remove null values
     V_orig = df_orig['V_atomic'].dropna().values
     P_orig = df_orig['Pressure (GPa)'].dropna().values
     V_new = df_new['V_atomic'].dropna().values
     P_new = df_new['Pressure (GPa)'].dropna().values
 
-    # 确保数据配对
+    # Ensure data pairing
     min_len_orig = min(len(V_orig), len(P_orig))
     V_orig = V_orig[:min_len_orig]
     P_orig = P_orig[:min_len_orig]
@@ -487,40 +528,40 @@ def main():
     V_new = V_new[:min_len_new]
     P_new = P_new[:min_len_new]
 
-    print(f"\n📊 数据概览:")
-    print(f"   原相数据点数: {len(V_orig)}")
-    print(f"   新相数据点数: {len(V_new)}")
-    print(f"   原相体积范围: {V_orig.min():.4f} - {V_orig.max():.4f} Ų/atom")
-    print(f"   原相压力范围: {P_orig.min():.2f} - {P_orig.max():.2f} GPa")
-    print(f"   新相体积范围: {V_new.min():.4f} - {V_new.max():.4f} Ų/atom")
-    print(f"   新相压力范围: {P_new.min():.2f} - {P_new.max():.2f} GPa")
+    print(f"\n📊 Data Overview:")
+    print(f"   Original phase data points: {len(V_orig)}")
+    print(f"   New phase data points: {len(V_new)}")
+    print(f"   Original phase volume range: {V_orig.min():.4f} - {V_orig.max():.4f} Å³/atom")
+    print(f"   Original phase pressure range: {P_orig.min():.2f} - {P_orig.max():.2f} GPa")
+    print(f"   New phase volume range: {V_new.min():.4f} - {V_new.max():.4f} Å³/atom")
+    print(f"   New phase pressure range: {P_new.min():.2f} - {P_new.max():.2f} GPa")
 
-    # 进行拟合
-    print(f"\n🔧 开始进行Birch-Murnaghan方程拟合...")
-    results_orig = fit_bm_equations(V_orig, P_orig, "原相")
-    results_new = fit_bm_equations(V_new, P_new, "新相")
+    # Perform fitting
+    print(f"\n🔧 Starting Birch-Murnaghan equation fitting...")
+    results_orig = fit_bm_equations(V_orig, P_orig, "Original Phase")
+    results_new = fit_bm_equations(V_new, P_new, "New Phase")
 
-    # 绘制PV曲线
-    print(f"\n📈 正在绘制PV曲线...")
+    # Plot P-V curves
+    print(f"\n📈 Plotting P-V curves...")
     plot_pv_curves(V_orig, P_orig, V_new, P_new,
                    results_orig, results_new, save_dir)
 
-    # 绘制残差图
-    print(f"\n📉 正在绘制残差图...")
+    # Plot residuals
+    print(f"\n📉 Plotting residuals...")
     plot_residuals(V_orig, P_orig, V_new, P_new,
                    results_orig, results_new, save_dir)
 
-    # 保存结果
-    print(f"\n💾 正在保存拟合参数...")
+    # Save results
+    print(f"\n💾 Saving fitting parameters...")
     df_summary = save_results_to_csv(results_orig, results_new, save_dir)
 
     print(f"\n{'='*80}")
-    print("✨ 所有任务完成!")
+    print("✨ All tasks completed!")
     print(f"{'='*80}")
-    print(f"📁 输出目录: {save_dir}")
-    print(f"   - BM_fitting_results.png : PV曲线拟合图")
-    print(f"   - BM_fitting_residuals.png : 残差分析图")
-    print(f"   - BM_fitting_parameters.csv : 拟合参数汇总表")
+    print(f"📁 Output directory: {save_dir}")
+    print(f"   - BM_fitting_results.png : P-V curve fitting plots")
+    print(f"   - BM_fitting_residuals.png : Residual analysis plots")
+    print(f"   - BM_fitting_parameters.csv : Fitting parameters summary table")
     print(f"{'='*80}\n")
 
 
