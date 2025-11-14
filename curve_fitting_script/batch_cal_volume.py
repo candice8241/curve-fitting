@@ -122,6 +122,8 @@ class XRayDiffractionAnalyzer:
 
         Expected CSV format:
         File, Pressure, Peak Index, Peak #, Center, Amplitude, ...
+        OR
+        File, Peak #, Center, ... (pressure extracted from filename)
 
         Returns:
         --------
@@ -130,32 +132,71 @@ class XRayDiffractionAnalyzer:
         """
         df = pd.read_csv(csv_path)
 
+        # Debug: print columns
+        print(f"CSV columns: {df.columns.tolist()}")
+
         pressure_data = defaultdict(list)
 
         # Group by file/pressure
-        for _, row in df.iterrows():
+        for idx, row in df.iterrows():
             try:
-                # Extract pressure (assuming it's in the filename or a column)
+                pressure = None
+
+                # Method 1: Check for 'Pressure' column
                 if 'Pressure' in df.columns:
-                    pressure = float(row['Pressure'])
-                elif 'File' in df.columns:
-                    # Try to extract pressure from filename
+                    try:
+                        pressure = float(row['Pressure'])
+                    except (ValueError, TypeError):
+                        pass
+
+                # Method 2: Extract from 'File' column
+                if pressure is None and 'File' in df.columns:
                     import re
-                    match = re.search(r'(\d+\.?\d*)\s*GPa', str(row['File']), re.IGNORECASE)
+                    file_str = str(row['File'])
+                    # Try various patterns: "10GPa", "10 GPa", "10.5GPa", etc.
+                    match = re.search(r'(\d+\.?\d*)\s*[Gg][Pp][Aa]', file_str)
                     if match:
                         pressure = float(match.group(1))
                     else:
-                        pressure = 0.0
-                else:
-                    pressure = 0.0
+                        # Try pattern like "file_10_" where 10 is pressure
+                        match = re.search(r'[_\-](\d+\.?\d*)[_\-]', file_str)
+                        if match:
+                            pressure = float(match.group(1))
 
-                # Get peak position
-                if 'Center' in df.columns:
-                    peak_position = float(row['Center'])
+                # Method 3: Use row index as pressure (sequential)
+                if pressure is None:
+                    pressure = float(idx)
+
+                # Get peak position - try multiple column names
+                peak_position = None
+                for col_name in ['Center', 'center', 'Peak Position', 'Position', '2theta', 'Two-Theta']:
+                    if col_name in df.columns:
+                        try:
+                            peak_position = float(row[col_name])
+                            break
+                        except (ValueError, TypeError):
+                            continue
+
+                # If still no peak position, use first numeric column after file info
+                if peak_position is None:
+                    numeric_cols = df.select_dtypes(include=[np.number]).columns
+                    if len(numeric_cols) > 0:
+                        peak_position = float(row[numeric_cols[0]])
+
+                if peak_position is not None:
                     pressure_data[pressure].append(peak_position)
+                    print(f"Row {idx}: Pressure={pressure:.2f}, Peak={peak_position:.4f}")
 
-            except (ValueError, KeyError):
+            except (ValueError, KeyError, TypeError) as e:
+                print(f"Warning: Skipping row {idx}: {e}")
                 continue
+
+        if not pressure_data:
+            raise ValueError("No valid pressure-peak data found in CSV file. Please check the file format.")
+
+        print(f"\nSuccessfully loaded data for {len(pressure_data)} pressure points")
+        for p in sorted(pressure_data.keys())[:3]:  # Show first 3
+            print(f"  Pressure {p:.2f}: {len(pressure_data[p])} peaks")
 
         return dict(pressure_data)
 

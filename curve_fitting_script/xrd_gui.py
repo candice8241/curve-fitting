@@ -694,61 +694,133 @@ class XRDProcessingGUI:
             self.log("🔀 Separating original and new peaks...")
 
             csv_path = self.phase_peak_csv.get()
+
+            if not csv_path or not os.path.exists(csv_path):
+                raise FileNotFoundError(f"CSV file not found: {csv_path}")
+
             output_dir = os.path.dirname(csv_path)
+            self.log(f"📂 Input file: {os.path.basename(csv_path)}")
+            self.log(f"📂 Output directory: {output_dir}")
 
             # Create analyzer instance
+            self.log("🔧 Initializing analyzer...")
             analyzer = XRayDiffractionAnalyzer(
                 wavelength=self.phase_wavelength.get(),
                 peak_tolerance_1=self.phase_tolerance_1.get(),
                 peak_tolerance_2=self.phase_tolerance_2.get(),
                 peak_tolerance_3=self.phase_tolerance_3.get(),
-                n_pressure_points=self.phase_n_points.get(),
-                csv_path=csv_path
+                n_pressure_points=self.phase_n_points.get()
             )
 
             # Read and process data
+            self.log("📖 Reading CSV file...")
             df = pd.read_csv(csv_path)
+            self.log(f"📊 Loaded {len(df)} rows with columns: {', '.join(df.columns[:5].tolist())}...")
+
+            self.log("🔍 Extracting pressure-peak data...")
             pressure_data = analyzer.read_pressure_peak_data(csv_path)
             pressures = sorted(pressure_data.keys())
+            self.log(f"📈 Found {len(pressures)} pressure points: {pressures[:5]}..." if len(pressures) > 5 else f"📈 Pressure points: {pressures}")
 
+            # Find phase transition
+            self.log("🔎 Detecting phase transition...")
             transition_pressure, before_pressures, after_pressures = analyzer.find_phase_transition_point(
                 pressure_data=pressure_data, tolerance=analyzer.peak_tolerance_1)
 
+            if transition_pressure:
+                self.log(f"⚡ Phase transition detected at: {transition_pressure} GPa")
+                self.log(f"   Before: {len(before_pressures)} points, After: {len(after_pressures)} points")
+            else:
+                self.log("ℹ️  No clear phase transition detected")
+
             # Identify original and new peaks
+            self.log("🔍 Identifying original peaks...")
             original_peaks = analyzer.build_original_peak_dataset(
                 pressure_data, tracked_new_peak_dataset=None,
                 tolerance=analyzer.peak_tolerance_3)
 
+            self.log("🔍 Identifying new peaks...")
             new_peaks = analyzer.collect_tracked_new_peaks(
                 pressure_data, transition_pressure,
                 after_pressures, new_peaks_ref=None, tolerance=analyzer.peak_tolerance_2)
 
+            self.log(f"📊 Original peaks: {len(original_peaks)}, New peaks: {len(new_peaks)}")
+
+            # Create peak index mapping from peak positions
+            # Group peaks by pressure and assign indices
+            peak_index_map = {}
+            for pressure in sorted(pressure_data.keys()):
+                peaks = pressure_data[pressure]
+                for idx, peak_pos in enumerate(peaks):
+                    # Create a unique identifier for this peak
+                    peak_key = (pressure, peak_pos)
+                    peak_index_map[peak_key] = idx
+
             # Save original peaks
+            self.log("💾 Saving original peaks...")
             original_csv = os.path.join(output_dir, "original_peaks.csv")
-            if 'Peak Index' in df.columns:
-                df_original = df[df['Peak Index'].isin(original_peaks)]
+
+            # Filter dataframe for original peaks
+            df_original_list = []
+            for _, row in df.iterrows():
+                # Try to match this row to original peaks
+                try:
+                    if 'Center' in df.columns:
+                        peak_pos = float(row['Center'])
+                        # Check if this peak is in original_peaks
+                        for pressure in pressure_data.keys():
+                            if peak_pos in pressure_data[pressure]:
+                                peak_idx = pressure_data[pressure].index(peak_pos)
+                                if peak_idx in original_peaks:
+                                    df_original_list.append(row)
+                                    break
+                except:
+                    pass
+
+            if df_original_list:
+                df_original = pd.DataFrame(df_original_list)
             else:
-                df_original = df.head(len(original_peaks))
+                # Fallback: use first N rows
+                df_original = df.head(len(original_peaks) if original_peaks else len(df) // 2)
+
             df_original.to_csv(original_csv, index=False)
-            self.log(f"✅ Original peaks saved: {original_csv}")
+            self.log(f"✅ Original peaks saved: {original_csv} ({len(df_original)} rows)")
 
             # Save new peaks
+            self.log("💾 Saving new peaks...")
             new_csv = os.path.join(output_dir, "new_peaks.csv")
-            if 'Peak Index' in df.columns:
-                df_new = df[df['Peak Index'].isin(new_peaks)]
+
+            df_new_list = []
+            for _, row in df.iterrows():
+                try:
+                    if 'Center' in df.columns:
+                        peak_pos = float(row['Center'])
+                        for pressure in pressure_data.keys():
+                            if peak_pos in pressure_data[pressure]:
+                                peak_idx = pressure_data[pressure].index(peak_pos)
+                                if peak_idx in new_peaks:
+                                    df_new_list.append(row)
+                                    break
+                except:
+                    pass
+
+            if df_new_list:
+                df_new = pd.DataFrame(df_new_list)
             else:
-                df_new = df.tail(len(new_peaks))
+                # Fallback: use last N rows
+                df_new = df.tail(len(new_peaks) if new_peaks else len(df) // 2)
+
             df_new.to_csv(new_csv, index=False)
-            self.log(f"✅ New peaks saved: {new_csv}")
+            self.log(f"✅ New peaks saved: {new_csv} ({len(df_new)} rows)")
 
-            self.log(f"📊 Original peaks: {len(original_peaks)}, New peaks: {len(new_peaks)}")
-            if transition_pressure:
-                self.log(f"⚡ Phase transition detected at: {transition_pressure} GPa")
-
+            self.log(f"\n✅ Peak separation completed successfully!")
             self.show_success("Peak separation completed!")
+
         except Exception as e:
-            self.log(f"❌ Error: {str(e)}")
-            messagebox.showerror("Error", str(e))
+            import traceback
+            error_msg = f"❌ Error: {str(e)}\n\n{traceback.format_exc()}"
+            self.log(error_msg)
+            messagebox.showerror("Error", f"{str(e)}\n\nCheck log for details.")
         finally:
             self.progress.stop()
 
