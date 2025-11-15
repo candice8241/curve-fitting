@@ -31,6 +31,10 @@ class RadialXRDModule(GUIBase):
         self.parent = parent
         self.root = root
 
+        # Track active threads
+        self.active_threads = []
+        self.is_processing = False
+
         # Initialize variables
         self._init_variables()
 
@@ -38,21 +42,22 @@ class RadialXRDModule(GUIBase):
         self.custom_sectors = []
 
     def _init_variables(self):
-        """Initialize all Tkinter variables"""
-        self.radial_poni_path = tk.StringVar()
-        self.radial_mask_path = tk.StringVar()
-        self.radial_input_pattern = tk.StringVar()
-        self.radial_output_dir = tk.StringVar()
-        self.radial_dataset_path = tk.StringVar(value="entry/data/data")
-        self.radial_npt = tk.IntVar(value=4000)
-        self.radial_unit = tk.StringVar(value='2th_deg')
-        self.radial_azimuth_start = tk.DoubleVar(value=0.0)
-        self.radial_azimuth_end = tk.DoubleVar(value=90.0)
-        self.radial_sector_label = tk.StringVar(value="Sector_1")
-        self.radial_preset = tk.StringVar(value='quadrants')
-        self.radial_mode = tk.StringVar(value='single')  # 'single' or 'multiple'
-        self.radial_multiple_mode = tk.StringVar(value='custom')  # 'preset' or 'custom'
-        self.radial_output_csv = tk.BooleanVar(value=True)  # Enable CSV output by default
+        """Initialize all Tkinter variables - must be called from main thread"""
+        # Bind all Tkinter variables to the root window explicitly
+        self.radial_poni_path = tk.StringVar(master=self.root)
+        self.radial_mask_path = tk.StringVar(master=self.root)
+        self.radial_input_pattern = tk.StringVar(master=self.root)
+        self.radial_output_dir = tk.StringVar(master=self.root)
+        self.radial_dataset_path = tk.StringVar(master=self.root, value="entry/data/data")
+        self.radial_npt = tk.IntVar(master=self.root, value=4000)
+        self.radial_unit = tk.StringVar(master=self.root, value='2th_deg')
+        self.radial_azimuth_start = tk.DoubleVar(master=self.root, value=0.0)
+        self.radial_azimuth_end = tk.DoubleVar(master=self.root, value=90.0)
+        self.radial_sector_label = tk.StringVar(master=self.root, value="Sector_1")
+        self.radial_preset = tk.StringVar(master=self.root, value='quadrants')
+        self.radial_mode = tk.StringVar(master=self.root, value='single')  # 'single' or 'multiple'
+        self.radial_multiple_mode = tk.StringVar(master=self.root, value='custom')  # 'preset' or 'custom'
+        self.radial_output_csv = tk.BooleanVar(master=self.root, value=True)  # Enable CSV output by default
 
     def setup_ui(self):
         """Setup the complete radial XRD UI"""
@@ -442,22 +447,22 @@ class RadialXRDModule(GUIBase):
             tk.Label(row_frame, text=str(idx + 1), bg='white', width=3,
                     font=('Comic Sans MS', 8)).pack(side=tk.LEFT, padx=2)
 
-            # Start angle entry
-            start_var = tk.DoubleVar(value=sector_data[0])
+            # Start angle entry - bind to root explicitly
+            start_var = tk.DoubleVar(master=self.root, value=sector_data[0])
             start_entry = ttk.Spinbox(row_frame, from_=0, to=360, textvariable=start_var,
                                      width=13, font=('Comic Sans MS', 8))
             start_entry.pack(side=tk.LEFT, padx=2)
             sector_data[0] = start_var
 
-            # End angle entry
-            end_var = tk.DoubleVar(value=sector_data[1])
+            # End angle entry - bind to root explicitly
+            end_var = tk.DoubleVar(master=self.root, value=sector_data[1])
             end_entry = ttk.Spinbox(row_frame, from_=0, to=360, textvariable=end_var,
                                    width=13, font=('Comic Sans MS', 8))
             end_entry.pack(side=tk.LEFT, padx=2)
             sector_data[1] = end_var
 
-            # Label entry
-            label_var = tk.StringVar(value=sector_data[2])
+            # Label entry - bind to root explicitly
+            label_var = tk.StringVar(master=self.root, value=sector_data[2])
             label_entry = tk.Entry(row_frame, textvariable=label_var,
                                   font=('Comic Sans MS', 8), width=18)
             label_entry.pack(side=tk.LEFT, padx=2)
@@ -493,21 +498,34 @@ class RadialXRDModule(GUIBase):
     def radial_log(self, message):
         """Thread-safe log message to the radial log text widget"""
         def _log():
-            if hasattr(self, 'radial_log_text'):
-                self.radial_log_text.config(state='normal')
-                self.radial_log_text.insert(tk.END, message + "\n")
-                self.radial_log_text.see(tk.END)
-                self.radial_log_text.config(state='disabled')
+            try:
+                if hasattr(self, 'radial_log_text') and self.radial_log_text.winfo_exists():
+                    self.radial_log_text.config(state='normal')
+                    self.radial_log_text.insert(tk.END, message + "\n")
+                    self.radial_log_text.see(tk.END)
+                    self.radial_log_text.config(state='disabled')
+            except tk.TclError:
+                # Widget may have been destroyed, silently ignore
+                pass
 
         # Check if we're on the main thread
         if threading.current_thread() is threading.main_thread():
             _log()
         else:
-            # Schedule on main thread
-            self.root.after(0, _log)
+            # Schedule on main thread - use try/except in case root is destroyed
+            try:
+                self.root.after(0, _log)
+            except (tk.TclError, RuntimeError):
+                # Root window may have been destroyed
+                pass
 
     def run_azimuthal_integration(self):
         """Run azimuthal integration based on selected mode"""
+        # Check if already processing
+        if self.is_processing:
+            messagebox.showwarning("Warning", "Processing already in progress!")
+            return
+
         # Validate inputs
         if not self.radial_poni_path.get():
             messagebox.showerror("Error", "Please select PONI file")
@@ -519,50 +537,91 @@ class RadialXRDModule(GUIBase):
             messagebox.showerror("Error", "Please select output directory")
             return
 
-        # 🔧 在主线程中预先获取所有参数值
-        params = {
-            'mode': self.radial_mode.get(),
-            'poni_path': self.radial_poni_path.get(),
-            'mask_path': self.radial_mask_path.get(),
-            'input_pattern': self.radial_input_pattern.get(),
-            'output_dir': self.radial_output_dir.get(),
-            'dataset_path': self.radial_dataset_path.get(),
-            'npt': self.radial_npt.get(),
-            'unit': self.radial_unit.get(),
-            'output_csv': self.radial_output_csv.get()
-        }
+        # 🔧 在主线程中预先获取所有参数值（避免在后台线程访问Tkinter变量）
+        try:
+            params = {
+                'mode': self.radial_mode.get(),
+                'poni_path': self.radial_poni_path.get(),
+                'mask_path': self.radial_mask_path.get(),
+                'input_pattern': self.radial_input_pattern.get(),
+                'output_dir': self.radial_output_dir.get(),
+                'dataset_path': self.radial_dataset_path.get(),
+                'npt': self.radial_npt.get(),
+                'unit': self.radial_unit.get(),
+                'output_csv': self.radial_output_csv.get()
+            }
 
-        # 获取 sector 信息
-        if params['mode'] == 'single':
-            params['sectors'] = [(
-                float(self.radial_azimuth_start.get()),
-                float(self.radial_azimuth_end.get()),
-                str(self.radial_sector_label.get())
-            )]
-        else:
-            if self.radial_multiple_mode.get() == 'preset':
-                preset_name = self.radial_preset.get()
-                params['sectors'] = self._get_preset_sectors(preset_name)
-                params['preset_name'] = preset_name
+            # 获取 sector 信息
+            if params['mode'] == 'single':
+                params['sectors'] = [(
+                    float(self.radial_azimuth_start.get()),
+                    float(self.radial_azimuth_end.get()),
+                    str(self.radial_sector_label.get())
+                )]
             else:
-                # 在主线程中获取自定义 sectors 的值
-                sectors = []
-                for sector_data in self.custom_sectors:
-                    start = sector_data[0].get() if hasattr(sector_data[0], 'get') else sector_data[0]
-                    end = sector_data[1].get() if hasattr(sector_data[1], 'get') else sector_data[1]
-                    label = sector_data[2].get() if hasattr(sector_data[2], 'get') else sector_data[2]
-                    sectors.append((float(start), float(end), str(label)))
-                params['sectors'] = sectors
+                if self.radial_multiple_mode.get() == 'preset':
+                    preset_name = self.radial_preset.get()
+                    params['sectors'] = self._get_preset_sectors(preset_name)
+                    params['preset_name'] = preset_name
+                else:
+                    # 在主线程中获取自定义 sectors 的值
+                    sectors = []
+                    for sector_data in self.custom_sectors:
+                        start = sector_data[0].get() if hasattr(sector_data[0], 'get') else sector_data[0]
+                        end = sector_data[1].get() if hasattr(sector_data[1], 'get') else sector_data[1]
+                        label = sector_data[2].get() if hasattr(sector_data[2], 'get') else sector_data[2]
+                        sectors.append((float(start), float(end), str(label)))
+                    params['sectors'] = sectors
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to read parameters: {str(e)}")
+            return
+
+        # Mark as processing
+        self.is_processing = True
 
         # Run in background thread
-        threading.Thread(target=self._run_azimuthal_integration_thread,
-                        args=(params,), daemon=True).start()
+        thread = threading.Thread(target=self._run_azimuthal_integration_thread,
+                                 args=(params,), daemon=True)
+        self.active_threads.append(thread)
+        thread.start()
 
     def _run_azimuthal_integration_thread(self, params):
         """Background thread for azimuthal integration"""
+        def start_progress():
+            try:
+                if hasattr(self, 'radial_progress'):
+                    self.radial_progress.start()
+            except:
+                pass
+
+        def stop_progress():
+            try:
+                if hasattr(self, 'radial_progress'):
+                    self.radial_progress.stop()
+            except:
+                pass
+            # Mark as not processing
+            self.is_processing = False
+
+        def show_success():
+            try:
+                self.show_success(self.root, "Azimuthal integration completed successfully!")
+            except:
+                pass
+
+        def show_error(err_msg):
+            try:
+                messagebox.showerror("Error", f"Azimuthal integration failed:\n{err_msg}")
+            except:
+                pass
+
         try:
             # Use root.after() for GUI operations
-            self.root.after(0, self.radial_progress.start)
+            try:
+                self.root.after(0, start_progress)
+            except:
+                pass
 
             if params['mode'] == 'single':
                 self.radial_log("🎯 Starting Single Sector Azimuthal Integration")
@@ -572,18 +631,30 @@ class RadialXRDModule(GUIBase):
                 self._run_multiple_sectors(params)
 
             self.radial_log("✅ Azimuthal integration completed!")
-            self.root.after(0, lambda: self.show_success(self.root,
-                            "Azimuthal integration completed successfully!"))
+
+            try:
+                self.root.after(0, show_success)
+            except:
+                pass
 
         except Exception as e:
             import traceback
             error_details = traceback.format_exc()
             self.radial_log(f"❌ Error: {str(e)}")
             self.radial_log(f"\nDetails:\n{error_details}")
-            self.root.after(0, lambda err=str(e): messagebox.showerror("Error",
-                f"Azimuthal integration failed:\n{err}"))
+
+            err_msg = str(e)
+            try:
+                self.root.after(0, lambda: show_error(err_msg))
+            except:
+                pass
+
         finally:
-            self.root.after(0, self.radial_progress.stop)
+            try:
+                self.root.after(0, stop_progress)
+            except:
+                # If root is destroyed, just mark as not processing
+                self.is_processing = False
 
     def _run_single_sector(self, params):
         """Run single sector azimuthal integration"""
