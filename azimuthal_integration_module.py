@@ -5,7 +5,7 @@ XRD Azimuthal Integration Module with GUI
 ==========================================
 Author: candicewang928@gmail.com
 Created: Nov 15, 2025
-Modified: Nov 16, 2025 - Ultimate Performance Fix (Incremental Updates)
+Modified: Nov 16, 2025 - Ultimate Fix with Grid Layout (Zero jumping)
 """
 
 
@@ -203,11 +203,11 @@ class XRDAzimuthalIntegrator:
 
 
 # ============================================================================
-# GUI Module with INCREMENTAL UPDATE STRATEGY
+# GUI Module with GRID LAYOUT (ZERO JUMPING)
 # ============================================================================
 
 class AzimuthalIntegrationModule(GUIBase):
-    """Azimuthal Integration module - INCREMENTAL UPDATE (NO REBUILD)"""
+    """Azimuthal Integration module - GRID LAYOUT (ZERO JUMPING)"""
 
     def __init__(self, parent, root):
         super().__init__()
@@ -217,7 +217,7 @@ class AzimuthalIntegrationModule(GUIBase):
         self.processing = False
         self.stop_processing = False
         self.custom_sectors = []
-        self.sector_row_widgets = []  # Track row widgets for incremental updates
+        self.sector_rows = []  # Track {data, widgets, visible} for each row
 
     def _init_variables(self):
         self.poni_path = tk.StringVar()
@@ -462,7 +462,7 @@ class AzimuthalIntegrationModule(GUIBase):
     def update_multiple_submode(self):
         for widget in self.submode_frame.winfo_children():
             widget.destroy()
-        self.sector_row_widgets = []  # Clear row widgets tracking
+        self.sector_rows = []
 
         if self.multiple_mode.get() == 'preset':
             self._setup_preset_mode()
@@ -493,7 +493,7 @@ class AzimuthalIntegrationModule(GUIBase):
                 font=('Comic Sans MS', 9, 'italic')).pack(anchor=tk.W, pady=(8, 0))
 
     def _setup_custom_sectors_mode(self):
-        """Custom sectors - INCREMENTAL UPDATE STRATEGY (NO REBUILD)"""
+        """Custom sectors - GRID LAYOUT (ZERO JUMPING)"""
         if not self.custom_sectors:
             self.custom_sectors = [
                 [tk.DoubleVar(value=0.0), tk.DoubleVar(value=90.0), tk.StringVar(value="Sector_1")],
@@ -502,27 +502,29 @@ class AzimuthalIntegrationModule(GUIBase):
                 [tk.DoubleVar(value=270.0), tk.DoubleVar(value=360.0), tk.StringVar(value="Sector_4")]
             ]
 
-        # Main container
+        # Main container - FIXED HEIGHT to prevent jumping
         self.custom_center_all = tk.Frame(self.submode_frame, bg=self.colors['card_bg'])
-        self.custom_center_all.pack(expand=True, anchor='center')
+        self.custom_center_all.pack(expand=True, anchor='center', fill=tk.BOTH)
 
-        # Warning box
+        # Warning box - GRID row 0
         instruction_frame = tk.Frame(self.custom_center_all, bg='#FFF4DC',
                                      relief='solid', borderwidth=1, padx=15, pady=8)
-        instruction_frame.pack(pady=(0, 15), anchor='center')
+        instruction_frame.grid(row=0, column=0, pady=(0, 15), sticky='')
 
         tk.Label(instruction_frame,
                 text="💡 Define custom azimuthal sectors. Add multiple rows for different angular ranges.",
                 bg='#FFF4DC', fg=self.colors['text_dark'],
                 font=('Comic Sans MS', 9)).pack()
 
-        # Sectors container
-        self.sectors_container = tk.Frame(self.custom_center_all, bg=self.colors['card_bg'])
-        self.sectors_container.pack(pady=(0, 15), anchor='center')
+        # Sectors container - GRID row 1 with FIXED HEIGHT
+        self.sectors_container = tk.Frame(self.custom_center_all, bg=self.colors['card_bg'],
+                                          height=200)  # Fixed height prevents jumping
+        self.sectors_container.grid(row=1, column=0, pady=(0, 15))
+        self.sectors_container.grid_propagate(False)  # Prevent auto-resizing
 
-        # Buttons
+        # Buttons - GRID row 2
         btn_frame = tk.Frame(self.custom_center_all, bg=self.colors['card_bg'])
-        btn_frame.pack(anchor='center')
+        btn_frame.grid(row=2, column=0)
 
         tk.Button(btn_frame, text="🐾 Add Sector", command=self._add_sector,
                  bg='#D8A7D8', fg='white',
@@ -534,19 +536,27 @@ class AzimuthalIntegrationModule(GUIBase):
                  font=('Comic Sans MS', 10, 'bold'), relief='flat',
                  padx=6, pady=7, cursor='hand2').pack(side=tk.LEFT, padx=15)
 
+        # Center the grid column
+        self.custom_center_all.grid_columnconfigure(0, weight=1)
+
         # Create initial rows
         for idx in range(len(self.custom_sectors)):
             self._create_sector_row(idx)
 
     def _create_sector_row(self, idx):
-        """Create a single sector row - INCREMENTAL approach"""
+        """Create a single sector row using GRID layout"""
         sector = self.custom_sectors[idx]
 
         row_frame = tk.Frame(self.sectors_container, bg=self.colors['card_bg'])
-        row_frame.pack(pady=3, anchor='center')
+        row_frame.grid(row=idx, column=0, pady=3, sticky='')
 
-        # Store reference
-        self.sector_row_widgets.append(row_frame)
+        # Store row info
+        row_info = {
+            'data': sector,
+            'frame': row_frame,
+            'visible': True
+        }
+        self.sector_rows.append(row_info)
 
         # Number label
         num_label = tk.Label(row_frame, text=f"#{idx+1}", bg=self.colors['card_bg'],
@@ -577,57 +587,66 @@ class AzimuthalIntegrationModule(GUIBase):
                  relief='flat', width=3, cursor='hand2').pack(side=tk.LEFT)
 
     def _add_sector(self):
-        """Add sector - INCREMENTAL (only create new row)"""
+        """Add sector - Grid approach"""
         new_sector = [
             tk.DoubleVar(value=0.0),
             tk.DoubleVar(value=90.0),
             tk.StringVar(value=f"Sector_{len(self.custom_sectors) + 1}")
         ]
         self.custom_sectors.append(new_sector)
-
-        # Only create the new row, don't rebuild everything
         self._create_sector_row(len(self.custom_sectors) - 1)
 
+        # Increase container height if needed
+        new_height = 50 * len(self.custom_sectors)
+        self.sectors_container.config(height=max(200, new_height))
+
     def _delete_sector(self, index):
-        """Delete sector - INCREMENTAL (only remove one row)"""
-        if len(self.custom_sectors) <= 1:
+        """Delete sector - Hide with grid_forget (no layout change)"""
+        if len([r for r in self.sector_rows if r['visible']]) <= 1:
             messagebox.showwarning("Warning", "At least one sector must be defined!")
             return
 
         # Remove from data
         del self.custom_sectors[index]
 
-        # Destroy the specific row widget
-        if index < len(self.sector_row_widgets):
-            self.sector_row_widgets[index].destroy()
-            del self.sector_row_widgets[index]
+        # Hide the row using grid_forget (doesn't trigger layout recalculation)
+        self.sector_rows[index]['frame'].grid_forget()
+        self.sector_rows[index]['visible'] = False
+        del self.sector_rows[index]
 
-        # Update numbering for remaining rows
-        self._renumber_sectors()
+        # Renumber and reposition remaining rows
+        self._repack_sectors()
 
-    def _renumber_sectors(self):
-        """Update sector numbers without rebuilding"""
-        for idx, row_widget in enumerate(self.sector_row_widgets):
-            # Find the number label (first child)
-            children = row_widget.winfo_children()
-            if children:
-                num_label = children[0]
-                if isinstance(num_label, tk.Label):
-                    num_label.config(text=f"#{idx+1}")
+    def _repack_sectors(self):
+        """Reposition visible rows without destroying them"""
+        visible_idx = 0
+        for idx, row_info in enumerate(self.sector_rows):
+            if row_info['visible']:
+                # Update row number
+                children = row_info['frame'].winfo_children()
+                if children and isinstance(children[0], tk.Label):
+                    children[0].config(text=f"#{visible_idx + 1}")
+
+                # Reposition using grid
+                row_info['frame'].grid(row=visible_idx, column=0, pady=3, sticky='')
+                visible_idx += 1
 
     def _clear_all_sectors(self):
-        """Clear all sectors - rebuild entire list"""
+        """Clear all sectors"""
         result = messagebox.askyesno("Confirm", "Clear all sectors and reset to default?")
         if result:
-            # Clear all
-            for row_widget in self.sector_row_widgets:
-                row_widget.destroy()
-            self.sector_row_widgets = []
+            # Clear all rows
+            for row_info in self.sector_rows:
+                row_info['frame'].destroy()
+            self.sector_rows = []
 
             # Reset data
             self.custom_sectors = [
                 [tk.DoubleVar(value=0.0), tk.DoubleVar(value=90.0), tk.StringVar(value="Sector_1")]
             ]
+
+            # Reset container height
+            self.sectors_container.config(height=200)
 
             # Create single default row
             self._create_sector_row(0)
