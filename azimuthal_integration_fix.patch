@@ -1,0 +1,124 @@
+--- INSTRUCTIONS ---
+Replace the _setup_custom_sectors_mode, _add_sector, _delete_sector, and _clear_all_sectors methods with the optimized versions below:
+
+--- STEP 1: Replace _setup_custom_sectors_mode method ---
+
+def _setup_custom_sectors_mode(self):
+    """Custom sectors - PERFECTLY CENTERED with compact yellow box - OPTIMIZED"""
+    if not self.custom_sectors:
+        self.custom_sectors = [
+            [tk.DoubleVar(value=0.0), tk.DoubleVar(value=90.0), tk.StringVar(value="Sector_1")],
+            [tk.DoubleVar(value=90.0), tk.DoubleVar(value=180.0), tk.StringVar(value="Sector_2")],
+            [tk.DoubleVar(value=180.0), tk.DoubleVar(value=270.0), tk.StringVar(value="Sector_3")],
+            [tk.DoubleVar(value=270.0), tk.DoubleVar(value=360.0), tk.StringVar(value="Sector_4")]
+        ]
+
+    # Main centered container - 完全居中
+    self.custom_center_all = tk.Frame(self.submode_frame, bg=self.colors['card_bg'])
+    self.custom_center_all.pack(expand=True, anchor='center')
+
+    # Warning box - compact width following text
+    instruction_frame = tk.Frame(self.custom_center_all, bg='#FFF4DC',
+                                 relief='solid', borderwidth=1, padx=15, pady=8)
+    instruction_frame.pack(pady=(0, 15), anchor='center')
+
+    tk.Label(instruction_frame,
+            text="💡 Define custom azimuthal sectors. Add multiple rows for different angular ranges.",
+            bg='#FFF4DC', fg=self.colors['text_dark'],
+            font=('Comic Sans MS', 9)).pack()
+
+    # Sectors list - 完美居中对齐 (store reference for updates)
+    self.sectors_container = tk.Frame(self.custom_center_all, bg=self.colors['card_bg'])
+    self.sectors_container.pack(pady=(0, 15), anchor='center')
+
+    # Buttons - 完美居中，间距调整
+    btn_frame = tk.Frame(self.custom_center_all, bg=self.colors['card_bg'])
+    btn_frame.pack(anchor='center')
+
+    tk.Button(btn_frame, text="🐾 Add Sector", command=self._add_sector,
+             bg='#D8A7D8', fg='white',
+             font=('Comic Sans MS', 10, 'bold'), relief='flat',
+             padx=6, pady=7, cursor='hand2').pack(side=tk.LEFT, padx=15)
+
+    tk.Button(btn_frame, text="🍉 Clear All", command=self._clear_all_sectors,
+             bg='#FF9FB5', fg='white',
+             font=('Comic Sans MS', 10, 'bold'), relief='flat',
+             padx=6, pady=7, cursor='hand2').pack(side=tk.LEFT, padx=15)
+
+    # Initial render
+    self._update_sectors_display()
+
+--- STEP 2: Add new method _update_sectors_display ---
+
+def _update_sectors_display(self):
+    """Only update the sectors list without rebuilding entire UI - PERFORMANCE OPTIMIZED"""
+    if not hasattr(self, 'sectors_container') or not self.sectors_container.winfo_exists():
+        return
+
+    # Disable updates during rebuild
+    self.sectors_container.update_idletasks()
+
+    # Clear only the sectors container
+    for widget in self.sectors_container.winfo_children():
+        widget.destroy()
+
+    # Rebuild only the sectors rows
+    for idx, sector in enumerate(self.custom_sectors):
+        row_frame = tk.Frame(self.sectors_container, bg=self.colors['card_bg'])
+        row_frame.pack(pady=3, anchor='center')
+
+        tk.Label(row_frame, text=f"#{idx+1}", bg=self.colors['card_bg'],
+                font=('Comic Sans MS', 10, 'bold'), width=3).pack(side=tk.LEFT, padx=(0, 8))
+
+        tk.Label(row_frame, text="Start:", bg=self.colors['card_bg'],
+                font=('Comic Sans MS', 10)).pack(side=tk.LEFT, padx=(0, 4))
+        self._create_number_spinner(row_frame, sector[0], 0, 360).pack(side=tk.LEFT, padx=(0, 10))
+
+        tk.Label(row_frame, text="End:", bg=self.colors['card_bg'],
+                font=('Comic Sans MS', 10)).pack(side=tk.LEFT, padx=(0, 4))
+        self._create_number_spinner(row_frame, sector[1], 0, 360).pack(side=tk.LEFT, padx=(0, 10))
+
+        tk.Label(row_frame, text="Label:", bg=self.colors['card_bg'],
+                font=('Comic Sans MS', 10)).pack(side=tk.LEFT, padx=(0, 4))
+        tk.Entry(row_frame, textvariable=sector[2],
+                font=('Comic Sans MS', 10), width=15).pack(side=tk.LEFT, padx=(0, 10))
+
+        tk.Button(row_frame, text="✖", command=lambda i=idx: self._delete_sector(i),
+                 bg='#E88C8C', fg='white', font=('Comic Sans MS', 9, 'bold'),
+                 relief='flat', width=3, cursor='hand2').pack(side=tk.LEFT)
+
+    # Force update
+    self.sectors_container.update_idletasks()
+
+--- STEP 3: Replace _add_sector method ---
+
+def _add_sector(self):
+    """Add sector - OPTIMIZED to only update list"""
+    new_sector = [
+        tk.DoubleVar(value=0.0),
+        tk.DoubleVar(value=90.0),
+        tk.StringVar(value=f"Sector_{len(self.custom_sectors) + 1}")
+    ]
+    self.custom_sectors.append(new_sector)
+    self._update_sectors_display()  # Only update sectors list, not entire UI
+
+--- STEP 4: Replace _delete_sector method ---
+
+def _delete_sector(self, index):
+    """Delete sector - OPTIMIZED to only update list"""
+    if len(self.custom_sectors) > 1:
+        del self.custom_sectors[index]
+        self._update_sectors_display()  # Only update sectors list, not entire UI
+    else:
+        messagebox.showwarning("Warning", "At least one sector must be defined!")
+
+--- STEP 5: Replace _clear_all_sectors method ---
+
+def _clear_all_sectors(self):
+    """Clear all sectors - OPTIMIZED to only update list"""
+    result = messagebox.askyesno("Confirm", "Clear all sectors and reset to default?")
+    if result:
+        self.custom_sectors = [
+            [tk.DoubleVar(value=0.0), tk.DoubleVar(value=90.0), tk.StringVar(value="Sector_1")]
+        ]
+        self._update_sectors_display()  # Only update sectors list, not entire UI
