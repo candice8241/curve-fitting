@@ -516,15 +516,18 @@ class AzimuthalIntegrationModule(GUIBase):
                 bg='#FFF4DC', fg=self.colors['text_dark'],
                 font=('Comic Sans MS', 9)).pack()
 
-        # 🎯 Fixed-height wrapper to prevent jumping
-        sectors_wrapper = tk.Frame(self.custom_center_all, bg=self.colors['card_bg'],
-                                   height=200)  # Fixed height
-        sectors_wrapper.pack(pady=(0, 15), anchor='center')
-        sectors_wrapper.pack_propagate(False)  # 🎯 Critical: Don't let children resize this frame
+        # 🎯 Sectors container with minimum height spacer
+        sectors_outer_frame = tk.Frame(self.custom_center_all, bg=self.colors['card_bg'])
+        sectors_outer_frame.pack(pady=(0, 15), anchor='center')
 
-        # Sectors container inside fixed wrapper
-        self.sectors_container = tk.Frame(sectors_wrapper, bg=self.colors['card_bg'])
-        self.sectors_container.pack(anchor='center')
+        # Invisible spacer to maintain minimum height (prevents jumping)
+        self.sectors_spacer = tk.Frame(sectors_outer_frame, bg=self.colors['card_bg'],
+                                       height=180, width=1)  # Minimum height for ~4 rows
+        self.sectors_spacer.pack(side=tk.LEFT)
+
+        # Actual sectors container
+        self.sectors_container = tk.Frame(sectors_outer_frame, bg=self.colors['card_bg'])
+        self.sectors_container.pack(side=tk.LEFT, anchor='center')
 
         # Buttons
         btn_frame = tk.Frame(self.custom_center_all, bg=self.colors['card_bg'])
