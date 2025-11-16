@@ -493,7 +493,7 @@ class AzimuthalIntegrationModule(GUIBase):
                 font=('Comic Sans MS', 9, 'italic')).pack(anchor=tk.W, pady=(8, 0))
 
     def _setup_custom_sectors_mode(self):
-        """Custom sectors - INCREMENTAL UPDATE STRATEGY (NO REBUILD)"""
+        """Custom sectors - FIXED LAYOUT (NO JUMPING) 🎯"""
         if not self.custom_sectors:
             self.custom_sectors = [
                 [tk.DoubleVar(value=0.0), tk.DoubleVar(value=90.0), tk.StringVar(value="Sector_1")],
@@ -506,7 +506,7 @@ class AzimuthalIntegrationModule(GUIBase):
         self.custom_center_all = tk.Frame(self.submode_frame, bg=self.colors['card_bg'])
         self.custom_center_all.pack(expand=True, anchor='center')
 
-        # Warning box
+        # 🎯 Warning box - FIXED position using place
         instruction_frame = tk.Frame(self.custom_center_all, bg='#FFF4DC',
                                      relief='solid', borderwidth=1, padx=15, pady=8)
         instruction_frame.pack(pady=(0, 15), anchor='center')
@@ -516,9 +516,15 @@ class AzimuthalIntegrationModule(GUIBase):
                 bg='#FFF4DC', fg=self.colors['text_dark'],
                 font=('Comic Sans MS', 9)).pack()
 
-        # Sectors container
-        self.sectors_container = tk.Frame(self.custom_center_all, bg=self.colors['card_bg'])
-        self.sectors_container.pack(pady=(0, 15), anchor='center')
+        # 🎯 Fixed-height wrapper to prevent jumping
+        sectors_wrapper = tk.Frame(self.custom_center_all, bg=self.colors['card_bg'],
+                                   height=200)  # Fixed height
+        sectors_wrapper.pack(pady=(0, 15), anchor='center')
+        sectors_wrapper.pack_propagate(False)  # 🎯 Critical: Don't let children resize this frame
+
+        # Sectors container inside fixed wrapper
+        self.sectors_container = tk.Frame(sectors_wrapper, bg=self.colors['card_bg'])
+        self.sectors_container.pack(anchor='center')
 
         # Buttons
         btn_frame = tk.Frame(self.custom_center_all, bg=self.colors['card_bg'])
