@@ -584,7 +584,7 @@ class PowderXRDModule(GUIBase):
         header3 = tk.Frame(content3, bg=self.colors['card_bg'])
         header3.pack(anchor=tk.W, pady=(0, 15))
 
-        tk.Label(header3, text="🔬", bg=self.colors['card_bg'],
+        tk.Label(header3, text="🐶", bg=self.colors['card_bg'],
                 font=('Segoe UI Emoji', 14)).pack(side=tk.LEFT, padx=(0, 6))
 
         tk.Label(header3, text="Phase Transition Analysis & Volume Calculation",
@@ -657,6 +657,11 @@ class PowderXRDModule(GUIBase):
         SpinboxStyleButton(output_frame, "Browse",
                           lambda: self.browse_folder(self.phase_volume_output),
                           width=75).pack(side=tk.LEFT, padx=(5, 0))
+
+        # Calculate Volume button
+        SpinboxStyleButton(left_col, "🦊 Calculate Volume & Fit Lattice Parameters",
+                          self.run_phase_analysis,
+                          width=300).pack(pady=(15, 0))
 
         # Right column - Parameters
         right_col = tk.Frame(main_content, bg='#F0E6FA', relief='solid', borderwidth=2, padx=20, pady=20)
@@ -742,17 +747,6 @@ class PowderXRDModule(GUIBase):
 
         ttk.Spinbox(n_row, from_=1, to=20, textvariable=self.phase_n_points,
                    width=8, font=('Arial', 9)).pack(side=tk.RIGHT, padx=(10, 0))
-
-        # Calculate Volume button
-        btn_frame2 = tk.Frame(parent_frame, bg=self.colors['bg'])
-        btn_frame2.pack(fill=tk.X, pady=(10, 15))
-
-        btn_cont2 = tk.Frame(btn_frame2, bg=self.colors['bg'])
-        btn_cont2.pack(expand=True)
-
-        SpinboxStyleButton(btn_cont2, "🦊 Calculate Volume & Fit Lattice Parameters",
-                          self.run_phase_analysis,
-                          width=300).pack(padx=(0,240))
 
         # Birch-Murnaghan Section
         bm_card = self.create_card_frame(parent_frame)
