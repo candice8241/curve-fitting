@@ -186,11 +186,14 @@ class PeakSelector:
 
         # Connect mouse click event
         self.cid = self.fig.canvas.mpl_connect('button_press_event', self.on_click)
+        # Connect scroll event for zoom
+        self.cid_scroll = self.fig.canvas.mpl_connect('scroll_event', self.on_scroll)
 
         print("\n" + "="*60)
         print("Interactive Peak Fitting Mode")
         print("="*60)
-        print("- Use toolbar to ZOOM and PAN")
+        print("- SCROLL WHEEL: zoom in/out at cursor position")
+        print("- Use toolbar to PAN (hand icon)")
         print("- LEFT-CLICK: fit single peak immediately")
         print("- CTRL+CLICK: select multiple peaks (shown as cyan markers)")
         print("- Click 'Fit Multi-Peak' to fit selected peaks together")
@@ -200,6 +203,40 @@ class PeakSelector:
         print("="*60 + "\n")
 
         plt.show(block=True)
+
+    def on_scroll(self, event):
+        """Handle scroll wheel for zooming"""
+        if event.inaxes != self.ax:
+            return
+
+        # Get current axis limits
+        xlim = self.ax.get_xlim()
+        ylim = self.ax.get_ylim()
+
+        # Get mouse position
+        xdata = event.xdata
+        ydata = event.ydata
+
+        # Zoom factor
+        if event.button == 'up':
+            scale_factor = 0.8  # Zoom in
+        elif event.button == 'down':
+            scale_factor = 1.25  # Zoom out
+        else:
+            return
+
+        # Calculate new limits centered on mouse position
+        new_width = (xlim[1] - xlim[0]) * scale_factor
+        new_height = (ylim[1] - ylim[0]) * scale_factor
+
+        # Keep mouse position at the same relative location
+        relx = (xlim[1] - xdata) / (xlim[1] - xlim[0])
+        rely = (ylim[1] - ydata) / (ylim[1] - ylim[0])
+
+        self.ax.set_xlim([xdata - new_width * (1 - relx), xdata + new_width * relx])
+        self.ax.set_ylim([ydata - new_height * (1 - rely), ydata + new_height * rely])
+
+        self.fig.canvas.draw()
 
     def on_click(self, event):
         """Handle mouse click - fit peak immediately or select for multi-peak"""
