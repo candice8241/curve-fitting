@@ -313,6 +313,34 @@ def run_peak_fitting(file_path, save_dir=None):
     selector = PeakSelector(x, y, filename, save_dir)
     plt.show()
 
+# ---------- File Selection Dialog ----------
+def select_file_dialog(initial_dir=None):
+    """
+    Open a file selection dialog
+    Returns the selected file path or None if cancelled
+    """
+    import tkinter as tk
+    from tkinter import filedialog
+
+    root = tk.Tk()
+    root.withdraw()  # Hide the main window
+    root.attributes('-topmost', True)  # Bring dialog to front
+
+    file_path = filedialog.askopenfilename(
+        initialdir=initial_dir,
+        title="Select XRD Data File",
+        filetypes=[
+            ("XRD Data Files", "*.xy *.dat *.txt"),
+            ("XY Files", "*.xy"),
+            ("DAT Files", "*.dat"),
+            ("Text Files", "*.txt"),
+            ("All Files", "*.*")
+        ]
+    )
+
+    root.destroy()
+    return file_path if file_path else None
+
 # ---------- Main ----------
 def main():
     """
@@ -324,8 +352,14 @@ def main():
     if len(sys.argv) > 1:
         file_path = sys.argv[1]
     else:
-        # Default path - modify as needed
-        file_path = r"D:\HEPS\ID31\dioptas_data\test\sample.xy"
+        # No argument provided - open file dialog
+        print("No file specified. Opening file selection dialog...")
+        file_path = select_file_dialog()
+        if not file_path:
+            print("No file selected. Exiting.")
+            return
+        run_peak_fitting(file_path)
+        return
 
     # Check if path exists
     if not os.path.exists(file_path):
@@ -334,22 +368,14 @@ def main():
         print("Example: python curve_fitting.py sample.xy")
         return
 
-    # If it's a directory, list available files
+    # If it's a directory, open file dialog in that directory
     if os.path.isdir(file_path):
-        files = [f for f in os.listdir(file_path) if f.endswith(('.xy', '.dat', '.txt'))]
-        if not files:
-            print(f"No data files (.xy, .dat, .txt) found in: {file_path}")
+        print(f"Opening file selection dialog in: {file_path}")
+        selected_file = select_file_dialog(initial_dir=file_path)
+        if not selected_file:
+            print("No file selected. Exiting.")
             return
-
-        print(f"\nFound {len(files)} data files in {file_path}:")
-        for i, f in enumerate(files[:20], 1):  # Show first 20 files
-            print(f"  {i}. {f}")
-        if len(files) > 20:
-            print(f"  ... and {len(files)-20} more")
-
-        print("\nPlease provide a specific file path:")
-        print(f"  python curve_fitting.py \"{os.path.join(file_path, files[0])}\"")
-        return
+        file_path = selected_file
 
     run_peak_fitting(file_path)
 
