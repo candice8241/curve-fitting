@@ -5,6 +5,9 @@ Click on peaks to fit them and get peak position, FWHM, and area
 @author: candicewang928@gmail.com
 """
 
+import matplotlib
+matplotlib.use('TkAgg')  # Use interactive backend
+
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
@@ -12,6 +15,9 @@ from scipy.integrate import trapezoid
 import os
 import pandas as pd
 from scipy.special import wofz
+
+# Enable interactive mode
+plt.ion()
 
 # ---------- Peak Functions ----------
 def voigt(x, amplitude, center, sigma, gamma):
@@ -84,51 +90,50 @@ class PeakSelector:
         self.results = []
         self.peak_count = 0
 
+    def run(self):
+        """Run interactive peak selection"""
         # Create figure
         self.fig, self.ax = plt.subplots(figsize=(14, 6))
-        self.ax.plot(x, y, 'b-', linewidth=0.8, label='Data')
+        self.ax.plot(self.x, self.y, 'b-', linewidth=0.8, label='Data')
         self.ax.set_xlabel('2θ (degree)', fontsize=12)
         self.ax.set_ylabel('Intensity', fontsize=12)
-        self.ax.set_title(f'{filename}\nLeft-click to select peaks, Right-click to finish', fontsize=12)
+        self.ax.set_title(f'{self.filename}\nLeft-click to select peaks, Middle-click or Right-click to finish', fontsize=12)
         self.ax.grid(True, alpha=0.3)
         self.ax.legend()
-
-        # Connect events
-        self.cid_click = self.fig.canvas.mpl_connect('button_press_event', self.on_click)
-        self.cid_key = self.fig.canvas.mpl_connect('key_press_event', self.on_key)
 
         print("\n" + "="*60)
         print("Manual Peak Selection Mode")
         print("="*60)
         print("Left-click: Select a peak position")
-        print("Right-click or press 'Enter': Finish selection and fit all peaks")
-        print("Press 'q': Quit without saving")
+        print("Middle-click or Right-click: Finish selection")
         print("="*60 + "\n")
 
-    def on_click(self, event):
-        if event.inaxes != self.ax:
-            return
+        # Use ginput for interactive selection (more reliable across backends)
+        selecting = True
+        while selecting:
+            try:
+                # Get one point at a time, timeout=0 means wait indefinitely
+                pts = plt.ginput(n=1, timeout=0, mouse_add=1, mouse_pop=2, mouse_stop=3)
 
-        if event.button == 1:  # Left click - select peak
-            x_click = event.xdata
-            self.selected_positions.append(x_click)
+                if len(pts) == 0:
+                    # Right-click or middle-click to finish
+                    selecting = False
+                else:
+                    x_click, y_click = pts[0]
+                    self.selected_positions.append(x_click)
 
-            # Mark the selected position
-            self.ax.axvline(x=x_click, color='r', linestyle='--', alpha=0.5)
-            self.ax.plot(x_click, event.ydata, 'ro', markersize=8)
-            self.fig.canvas.draw()
+                    # Mark the selected position
+                    self.ax.axvline(x=x_click, color='r', linestyle='--', alpha=0.5)
+                    self.ax.plot(x_click, y_click, 'ro', markersize=8)
+                    self.fig.canvas.draw()
 
-            print(f"   Peak {len(self.selected_positions)} selected at 2θ = {x_click:.4f}")
+                    print(f"   Peak {len(self.selected_positions)} selected at 2θ = {x_click:.4f}")
+            except Exception as e:
+                print(f"Selection ended: {e}")
+                selecting = False
 
-        elif event.button == 3:  # Right click - finish
-            self.finish_selection()
-
-    def on_key(self, event):
-        if event.key == 'enter':
-            self.finish_selection()
-        elif event.key == 'q':
-            print("\nQuitting without saving...")
-            plt.close(self.fig)
+        # Process selected peaks
+        self.finish_selection()
 
     def finish_selection(self):
         if len(self.selected_positions) == 0:
@@ -311,7 +316,7 @@ def run_peak_fitting(file_path, save_dir=None):
 
     # Start interactive selection
     selector = PeakSelector(x, y, filename, save_dir)
-    plt.show()
+    selector.run()
 
 # ---------- File Selection Dialog ----------
 def select_file_dialog(initial_dir=None):
