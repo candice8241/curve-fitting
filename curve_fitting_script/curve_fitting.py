@@ -34,6 +34,22 @@ def pseudo_voigt_with_bg(x, amplitude, center, sigma, gamma, eta, bg0, bg1):
     bg = bg0 + bg1 * x
     return pseudo_voigt(x, amplitude, center, sigma, gamma, eta) + bg
 
+# ---------- Multi-peak function ----------
+def multi_pseudo_voigt(x, *params):
+    """
+    Multi-peak Pseudo-Voigt: params = [bg0, bg1, amp1, cen1, sig1, gam1, eta1, amp2, cen2, ...]
+    First 2 params: linear background (intercept, slope)
+    Then groups of 5 params per peak
+    """
+    bg = params[0] + params[1] * x
+    n_peaks = (len(params) - 2) // 5
+    y = bg.copy()
+    for i in range(n_peaks):
+        offset = 2 + i * 5
+        amp, cen, sig, gam, eta = params[offset:offset+5]
+        y += pseudo_voigt(x, amp, cen, sig, gam, eta)
+    return y
+
 # ---------- FWHM Calculation ----------
 def calculate_fwhm(sigma, gamma, eta):
     """
@@ -77,6 +93,50 @@ def fit_single_peak(x_local, y_local):
         print(f"   Fit failed: {e}")
         return None, False
 
+# ---------- Fit multiple peaks ----------
+def fit_multi_peak(x_local, y_local, peak_positions):
+    """
+    Fit multiple peaks simultaneously with shared background
+    Returns: fitted parameters, success flag
+    """
+    n_peaks = len(peak_positions)
+
+    # Background initial guess
+    bg0 = np.mean([y_local[0], y_local[-1]])
+    bg1 = (y_local[-1] - y_local[0]) / (x_local[-1] - x_local[0])
+
+    # Initial guess for each peak
+    p0 = [bg0, bg1]
+    bounds_lower = [0, -np.inf]
+    bounds_upper = [np.inf, np.inf]
+
+    for pos in peak_positions:
+        # Find local maximum near the position
+        idx = np.argmin(np.abs(x_local - pos))
+        search_range = min(10, len(x_local)//4)
+        left_idx = max(0, idx - search_range)
+        right_idx = min(len(x_local), idx + search_range)
+        local_max_idx = left_idx + np.argmax(y_local[left_idx:right_idx])
+
+        amp_guess = y_local[local_max_idx] - bg0
+        cen_guess = x_local[local_max_idx]
+        sig_guess = 0.05
+        gam_guess = 0.05
+        eta_guess = 0.5
+
+        p0.extend([amp_guess, cen_guess, sig_guess, gam_guess, eta_guess])
+        bounds_lower.extend([0, x_local.min(), 0.001, 0.001, 0])
+        bounds_upper.extend([np.inf, x_local.max(), 1.0, 1.0, 1.0])
+
+    try:
+        popt, pcov = curve_fit(multi_pseudo_voigt, x_local, y_local,
+                               p0=p0, bounds=(bounds_lower, bounds_upper),
+                               maxfev=200000)
+        return popt, True
+    except Exception as e:
+        print(f"   Multi-peak fit failed: {e}")
+        return None, False
+
 # ---------- Interactive Peak Selection ----------
 class PeakSelector:
     def __init__(self, x, y, filename, save_dir):
@@ -88,6 +148,9 @@ class PeakSelector:
         self.peak_count = 0
         self.fit_lines = []  # Store fit plot objects
         self.picking_enabled = True
+        # Multi-peak selection
+        self.multi_peak_positions = []  # Temporary storage for Ctrl+click positions
+        self.multi_peak_markers = []    # Temporary markers for multi-peak selection
 
     def run(self):
         """Run interactive peak selection with zoom/pan support"""
@@ -104,9 +167,10 @@ class PeakSelector:
         self.ax.legend(loc='upper right')
 
         # Add buttons
-        ax_finish = self.fig.add_axes([0.7, 0.02, 0.1, 0.04])
-        ax_clear = self.fig.add_axes([0.55, 0.02, 0.1, 0.04])
-        ax_undo = self.fig.add_axes([0.4, 0.02, 0.1, 0.04])
+        ax_finish = self.fig.add_axes([0.75, 0.02, 0.1, 0.04])
+        ax_clear = self.fig.add_axes([0.6, 0.02, 0.1, 0.04])
+        ax_undo = self.fig.add_axes([0.45, 0.02, 0.1, 0.04])
+        ax_multi = self.fig.add_axes([0.25, 0.02, 0.15, 0.04])
 
         self.btn_finish = Button(ax_finish, 'Save & Exit')
         self.btn_finish.on_clicked(self.on_finish)
@@ -117,6 +181,9 @@ class PeakSelector:
         self.btn_undo = Button(ax_undo, 'Undo Last')
         self.btn_undo.on_clicked(self.on_undo)
 
+        self.btn_multi = Button(ax_multi, 'Fit Multi-Peak')
+        self.btn_multi.on_clicked(self.on_fit_multi_peak)
+
         # Connect mouse click event
         self.cid = self.fig.canvas.mpl_connect('button_press_event', self.on_click)
 
@@ -124,7 +191,9 @@ class PeakSelector:
         print("Interactive Peak Fitting Mode")
         print("="*60)
         print("- Use toolbar to ZOOM and PAN")
-        print("- LEFT-CLICK on a peak to fit it immediately")
+        print("- LEFT-CLICK: fit single peak immediately")
+        print("- CTRL+CLICK: select multiple peaks (shown as cyan markers)")
+        print("- Click 'Fit Multi-Peak' to fit selected peaks together")
         print("- Click 'Undo Last' to remove the last fit")
         print("- Click 'Clear All' to remove all fits")
         print("- Click 'Save & Exit' when done")
@@ -133,7 +202,7 @@ class PeakSelector:
         plt.show(block=True)
 
     def on_click(self, event):
-        """Handle mouse click - fit peak immediately"""
+        """Handle mouse click - fit peak immediately or select for multi-peak"""
         # Ignore clicks outside the main axes
         if event.inaxes != self.ax:
             return
@@ -148,9 +217,22 @@ class PeakSelector:
             return  # Don't pick peaks while zooming/panning
 
         x_click = event.xdata
+        y_click = event.ydata
 
-        # Fit the peak immediately
-        self.fit_and_plot_peak(x_click)
+        # Check if Ctrl is pressed for multi-peak selection
+        if event.key == 'control':
+            # Add to multi-peak selection
+            self.multi_peak_positions.append(x_click)
+
+            # Mark with cyan marker (temporary)
+            marker, = self.ax.plot(x_click, y_click, 'c^', markersize=12, alpha=0.8)
+            self.multi_peak_markers.append(marker)
+            self.fig.canvas.draw()
+
+            print(f"   Multi-peak: added position {len(self.multi_peak_positions)} at 2θ = {x_click:.4f}")
+        else:
+            # Single peak - fit immediately
+            self.fit_and_plot_peak(x_click)
 
     def fit_and_plot_peak(self, x_pos):
         """Fit a peak at the clicked position and plot result immediately"""
@@ -254,8 +336,131 @@ class PeakSelector:
 
         self.fit_lines = []
         self.peak_count = 0
+
+        # Also clear multi-peak selection
+        for marker in self.multi_peak_markers:
+            marker.remove()
+        self.multi_peak_markers = []
+        self.multi_peak_positions = []
+
         self.fig.canvas.draw()
         print("   All fits cleared.")
+
+    def on_fit_multi_peak(self, event):
+        """Fit multiple selected peaks together"""
+        if len(self.multi_peak_positions) < 2:
+            print("   Need at least 2 peaks for multi-peak fitting. Use Ctrl+Click to select.")
+            return
+
+        # Sort positions
+        positions = sorted(self.multi_peak_positions)
+        n_peaks = len(positions)
+
+        # Determine fitting range (extend beyond outer peaks)
+        min_pos = min(positions)
+        max_pos = max(positions)
+
+        # Find indices for the range
+        idx_min = np.argmin(np.abs(self.x - min_pos))
+        idx_max = np.argmin(np.abs(self.x - max_pos))
+
+        # Add window on each side
+        window = 30
+        left = max(0, idx_min - window)
+        right = min(len(self.x), idx_max + window)
+
+        x_local = self.x[left:right]
+        y_local = self.y[left:right]
+
+        print(f"   Fitting {n_peaks} peaks together...")
+
+        # Fit multiple peaks
+        popt, success = fit_multi_peak(x_local, y_local, positions)
+
+        if success:
+            bg0, bg1 = popt[0], popt[1]
+
+            # Plot results
+            x_smooth = np.linspace(x_local.min(), x_local.max(), 500)
+            y_fit = multi_pseudo_voigt(x_smooth, *popt)
+            bg_line = bg0 + bg1 * x_smooth
+
+            # Plot total fit and background
+            fit_line, = self.ax.plot(x_smooth, y_fit, 'r-', linewidth=2, alpha=0.8)
+            bg_plot, = self.ax.plot(x_smooth, bg_line, 'g--', linewidth=1, alpha=0.6)
+
+            plot_objects = [fit_line, bg_plot]
+            annotations = []
+
+            # Plot and annotate individual peaks
+            colors = plt.cm.Set1(np.linspace(0, 1, n_peaks))
+            for i in range(n_peaks):
+                offset = 2 + i * 5
+                amp, cen, sig, gam, eta = popt[offset:offset+5]
+
+                # Calculate individual peak curve
+                y_single = pseudo_voigt(x_smooth, amp, cen, sig, gam, eta) + bg_line
+
+                # Plot individual peak
+                peak_plot, = self.ax.plot(x_smooth, y_single, ':', linewidth=1.5,
+                                          color=colors[i], alpha=0.8)
+                plot_objects.append(peak_plot)
+
+                # Calculate FWHM and area
+                fwhm = calculate_fwhm(sig, gam, eta)
+                y_peak_only = pseudo_voigt(x_smooth, amp, cen, sig, gam, eta)
+                area = trapezoid(y_peak_only, x_smooth)
+
+                # Mark peak center
+                peak_marker, = self.ax.plot(cen, pseudo_voigt_with_bg(cen, amp, cen, sig, gam, eta, bg0, bg1),
+                                            '*', markersize=12, color=colors[i])
+                plot_objects.append(peak_marker)
+
+                # Add annotation
+                self.peak_count += 1
+                text_y = pseudo_voigt_with_bg(cen, amp, cen, sig, gam, eta, bg0, bg1)
+                annotation = self.ax.annotate(
+                    f'#{self.peak_count}\n2θ={cen:.3f}\nFWHM={fwhm:.4f}\nArea={area:.1f}',
+                    xy=(cen, text_y),
+                    xytext=(10, 10),
+                    textcoords='offset points',
+                    fontsize=8,
+                    bbox=dict(boxstyle='round,pad=0.3', facecolor='yellow', alpha=0.7)
+                )
+                annotations.append(annotation)
+
+                # Store result
+                self.fit_lines.append({
+                    'lines': plot_objects if i == n_peaks-1 else [],  # Only store once
+                    'annotation': annotation,
+                    'result': {
+                        'Peak #': self.peak_count,
+                        'Center (2θ)': cen,
+                        'FWHM': fwhm,
+                        'Area': area,
+                        'Amplitude': amp,
+                        'Sigma': sig,
+                        'Gamma': gam,
+                        'Eta': eta,
+                        'x_local': x_local,
+                        'y_local': y_local,
+                        'popt': [amp, cen, sig, gam, eta, bg0, bg1]  # Single peak format
+                    }
+                })
+
+                print(f"   Peak {self.peak_count}: Center={cen:.4f}, FWHM={fwhm:.4f}, Area={area:.2f}")
+
+            # Store plot objects in the last result for proper undo
+            if n_peaks > 0:
+                self.fit_lines[-1]['lines'] = plot_objects
+
+        # Clear temporary markers
+        for marker in self.multi_peak_markers:
+            marker.remove()
+        self.multi_peak_markers = []
+        self.multi_peak_positions = []
+
+        self.fig.canvas.draw()
 
     def on_finish(self, event):
         """Save results and close"""
