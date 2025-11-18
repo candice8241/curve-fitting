@@ -318,19 +318,37 @@ def main():
     """
     Example usage - modify the file path as needed
     """
-    # Option 1: Single file
-    file_path = r"D:\HEPS\ID31\dioptas_data\test\sample.xy"
-
-    # Option 2: Or use command line argument
     import sys
+
+    # Get file path from command line or use default
     if len(sys.argv) > 1:
         file_path = sys.argv[1]
+    else:
+        # Default path - modify as needed
+        file_path = r"D:\HEPS\ID31\dioptas_data\test\sample.xy"
 
-    # Check if file exists
+    # Check if path exists
     if not os.path.exists(file_path):
-        print(f"File not found: {file_path}")
+        print(f"Path not found: {file_path}")
         print("\nUsage: python curve_fitting.py <data_file>")
         print("Example: python curve_fitting.py sample.xy")
+        return
+
+    # If it's a directory, list available files
+    if os.path.isdir(file_path):
+        files = [f for f in os.listdir(file_path) if f.endswith(('.xy', '.dat', '.txt'))]
+        if not files:
+            print(f"No data files (.xy, .dat, .txt) found in: {file_path}")
+            return
+
+        print(f"\nFound {len(files)} data files in {file_path}:")
+        for i, f in enumerate(files[:20], 1):  # Show first 20 files
+            print(f"  {i}. {f}")
+        if len(files) > 20:
+            print(f"  ... and {len(files)-20} more")
+
+        print("\nPlease provide a specific file path:")
+        print(f"  python curve_fitting.py \"{os.path.join(file_path, files[0])}\"")
         return
 
     run_peak_fitting(file_path)
