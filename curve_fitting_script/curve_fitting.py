@@ -10,14 +10,12 @@ matplotlib.use('TkAgg')  # Use interactive backend
 
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.widgets import Button
 from scipy.optimize import curve_fit
 from scipy.integrate import trapezoid
 import os
 import pandas as pd
 from scipy.special import wofz
-
-# Enable interactive mode
-plt.ion()
 
 # ---------- Peak Functions ----------
 def voigt(x, amplitude, center, sigma, gamma):
@@ -86,78 +84,76 @@ class PeakSelector:
         self.y = y
         self.filename = filename
         self.save_dir = save_dir
-        self.selected_positions = []
         self.results = []
         self.peak_count = 0
+        self.fit_lines = []  # Store fit plot objects
+        self.picking_enabled = True
 
     def run(self):
-        """Run interactive peak selection"""
-        # Create figure
-        self.fig, self.ax = plt.subplots(figsize=(14, 6))
+        """Run interactive peak selection with zoom/pan support"""
+        # Create figure with space for buttons
+        self.fig = plt.figure(figsize=(14, 8))
+
+        # Main plot area
+        self.ax = self.fig.add_axes([0.1, 0.15, 0.85, 0.75])
         self.ax.plot(self.x, self.y, 'b-', linewidth=0.8, label='Data')
         self.ax.set_xlabel('2θ (degree)', fontsize=12)
         self.ax.set_ylabel('Intensity', fontsize=12)
-        self.ax.set_title(f'{self.filename}\nLeft-click to select peaks, Middle-click or Right-click to finish', fontsize=12)
+        self.ax.set_title(f'{self.filename}\nClick on peaks to fit (use toolbar to zoom/pan)', fontsize=12)
         self.ax.grid(True, alpha=0.3)
-        self.ax.legend()
+        self.ax.legend(loc='upper right')
+
+        # Add buttons
+        ax_finish = self.fig.add_axes([0.7, 0.02, 0.1, 0.04])
+        ax_clear = self.fig.add_axes([0.55, 0.02, 0.1, 0.04])
+        ax_undo = self.fig.add_axes([0.4, 0.02, 0.1, 0.04])
+
+        self.btn_finish = Button(ax_finish, 'Save & Exit')
+        self.btn_finish.on_clicked(self.on_finish)
+
+        self.btn_clear = Button(ax_clear, 'Clear All')
+        self.btn_clear.on_clicked(self.on_clear)
+
+        self.btn_undo = Button(ax_undo, 'Undo Last')
+        self.btn_undo.on_clicked(self.on_undo)
+
+        # Connect mouse click event
+        self.cid = self.fig.canvas.mpl_connect('button_press_event', self.on_click)
 
         print("\n" + "="*60)
-        print("Manual Peak Selection Mode")
+        print("Interactive Peak Fitting Mode")
         print("="*60)
-        print("Left-click: Select a peak position")
-        print("Middle-click or Right-click: Finish selection")
+        print("- Use toolbar to ZOOM and PAN")
+        print("- LEFT-CLICK on a peak to fit it immediately")
+        print("- Click 'Undo Last' to remove the last fit")
+        print("- Click 'Clear All' to remove all fits")
+        print("- Click 'Save & Exit' when done")
         print("="*60 + "\n")
 
-        # Use ginput for interactive selection (more reliable across backends)
-        selecting = True
-        while selecting:
-            try:
-                # Get one point at a time, timeout=0 means wait indefinitely
-                pts = plt.ginput(n=1, timeout=0, mouse_add=1, mouse_pop=2, mouse_stop=3)
+        plt.show(block=True)
 
-                if len(pts) == 0:
-                    # Right-click or middle-click to finish
-                    selecting = False
-                else:
-                    x_click, y_click = pts[0]
-                    self.selected_positions.append(x_click)
-
-                    # Mark the selected position
-                    self.ax.axvline(x=x_click, color='r', linestyle='--', alpha=0.5)
-                    self.ax.plot(x_click, y_click, 'ro', markersize=8)
-                    self.fig.canvas.draw()
-
-                    print(f"   Peak {len(self.selected_positions)} selected at 2θ = {x_click:.4f}")
-            except Exception as e:
-                print(f"Selection ended: {e}")
-                selecting = False
-
-        # Process selected peaks
-        self.finish_selection()
-
-    def finish_selection(self):
-        if len(self.selected_positions) == 0:
-            print("\nNo peaks selected!")
-            plt.close(self.fig)
+    def on_click(self, event):
+        """Handle mouse click - fit peak immediately"""
+        # Ignore clicks outside the main axes
+        if event.inaxes != self.ax:
             return
 
-        print(f"\n   Fitting {len(self.selected_positions)} selected peaks...")
+        # Only respond to left click (button 1)
+        if event.button != 1:
+            return
 
-        # Fit each selected peak
-        for i, pos in enumerate(self.selected_positions):
-            self.fit_peak_at_position(pos, i+1)
+        # Check if toolbar is in zoom/pan mode
+        toolbar = self.fig.canvas.manager.toolbar
+        if toolbar.mode != '':
+            return  # Don't pick peaks while zooming/panning
 
-        # Save results
-        self.save_results()
+        x_click = event.xdata
 
-        # Close the selection window
-        plt.close(self.fig)
+        # Fit the peak immediately
+        self.fit_and_plot_peak(x_click)
 
-        # Show fitted results
-        self.show_fit_results()
-
-    def fit_peak_at_position(self, x_pos, peak_num):
-        """Fit a peak at the clicked position"""
+    def fit_and_plot_peak(self, x_pos):
+        """Fit a peak at the clicked position and plot result immediately"""
         # Find the index closest to clicked position
         idx = np.argmin(np.abs(self.x - x_pos))
 
@@ -173,6 +169,7 @@ class PeakSelector:
         popt, success = fit_single_peak(x_local, y_local)
 
         if success:
+            self.peak_count += 1
             amplitude, center, sigma, gamma, eta, bg0, bg1 = popt
 
             # Calculate FWHM
@@ -183,24 +180,105 @@ class PeakSelector:
             y_peak = pseudo_voigt(x_fine, amplitude, center, sigma, gamma, eta)
             area = trapezoid(y_peak, x_fine)
 
-            # Store results
-            self.results.append({
-                'Peak #': peak_num,
-                'Center (2θ)': center,
-                'FWHM': fwhm,
-                'Area': area,
-                'Amplitude': amplitude,
-                'Sigma': sigma,
-                'Gamma': gamma,
-                'Eta': eta,
-                'x_local': x_local,
-                'y_local': y_local,
-                'popt': popt
+            # Plot fit on main figure
+            x_smooth = np.linspace(x_local.min(), x_local.max(), 500)
+            y_fit = pseudo_voigt_with_bg(x_smooth, *popt)
+            bg_line = bg0 + bg1 * x_smooth
+
+            # Plot and store references for undo
+            fit_line, = self.ax.plot(x_smooth, y_fit, 'r-', linewidth=2, alpha=0.8)
+            bg_plot, = self.ax.plot(x_smooth, bg_line, 'g--', linewidth=1, alpha=0.6)
+            peak_marker, = self.ax.plot(center, pseudo_voigt_with_bg(center, *popt), 'r*', markersize=15)
+
+            # Add text annotation
+            text_y = pseudo_voigt_with_bg(center, *popt)
+            annotation = self.ax.annotate(
+                f'#{self.peak_count}\n2θ={center:.3f}\nFWHM={fwhm:.4f}\nArea={area:.1f}',
+                xy=(center, text_y),
+                xytext=(10, 10),
+                textcoords='offset points',
+                fontsize=8,
+                bbox=dict(boxstyle='round,pad=0.3', facecolor='yellow', alpha=0.7)
+            )
+
+            # Store plot objects for undo
+            self.fit_lines.append({
+                'lines': [fit_line, bg_plot, peak_marker],
+                'annotation': annotation,
+                'result': {
+                    'Peak #': self.peak_count,
+                    'Center (2θ)': center,
+                    'FWHM': fwhm,
+                    'Area': area,
+                    'Amplitude': amplitude,
+                    'Sigma': sigma,
+                    'Gamma': gamma,
+                    'Eta': eta,
+                    'x_local': x_local,
+                    'y_local': y_local,
+                    'popt': popt
+                }
             })
 
-            print(f"   Peak {peak_num}: Center={center:.4f}, FWHM={fwhm:.4f}, Area={area:.2f}")
+            # Update canvas
+            self.fig.canvas.draw()
+
+            print(f"   Peak {self.peak_count}: Center={center:.4f}, FWHM={fwhm:.4f}, Area={area:.2f}")
         else:
-            print(f"   Peak {peak_num}: Fitting failed!")
+            print(f"   Fitting failed at 2θ = {x_pos:.4f}")
+
+    def on_undo(self, event):
+        """Remove the last fitted peak"""
+        if len(self.fit_lines) == 0:
+            print("   Nothing to undo")
+            return
+
+        # Get last fit
+        last_fit = self.fit_lines.pop()
+
+        # Remove plot objects
+        for line in last_fit['lines']:
+            line.remove()
+        last_fit['annotation'].remove()
+
+        self.peak_count -= 1
+        self.fig.canvas.draw()
+        print(f"   Removed last peak. {len(self.fit_lines)} peaks remaining.")
+
+    def on_clear(self, event):
+        """Clear all fitted peaks"""
+        for fit_data in self.fit_lines:
+            for line in fit_data['lines']:
+                line.remove()
+            fit_data['annotation'].remove()
+
+        self.fit_lines = []
+        self.peak_count = 0
+        self.fig.canvas.draw()
+        print("   All fits cleared.")
+
+    def on_finish(self, event):
+        """Save results and close"""
+        if len(self.fit_lines) == 0:
+            print("\nNo peaks fitted!")
+            plt.close(self.fig)
+            return
+
+        # Collect results
+        self.results = [fit_data['result'] for fit_data in self.fit_lines]
+
+        # Save results
+        self.save_results()
+
+        # Save the current figure
+        fig_path = os.path.join(self.save_dir, f"{self.filename}_manual_fit.png")
+        self.fig.savefig(fig_path, dpi=150, bbox_inches='tight')
+        print(f"   Figure saved to: {fig_path}")
+
+        plt.close(self.fig)
+
+        # Show individual peak fits
+        self.show_individual_fits()
 
     def save_results(self):
         """Save fitting results to CSV"""
@@ -226,8 +304,8 @@ class PeakSelector:
         df.to_csv(csv_path, index=False)
         print(f"\n   Results saved to: {csv_path}")
 
-    def show_fit_results(self):
-        """Display fitted peaks"""
+    def show_individual_fits(self):
+        """Display individual fitted peaks in subplots"""
         n_peaks = len(self.results)
         if n_peaks == 0:
             return
@@ -260,10 +338,14 @@ class PeakSelector:
             bg_line = popt[5] + popt[6] * x_smooth
             ax.plot(x_smooth, bg_line, 'g--', linewidth=1, label='Background')
 
+            # Plot peak without background
+            y_peak_only = pseudo_voigt(x_smooth, popt[0], popt[1], popt[2], popt[3], popt[4])
+            ax.fill_between(x_smooth, bg_line, y_fit, alpha=0.3, color='red', label='Peak Area')
+
             # Labels
             ax.set_xlabel('2θ (degree)')
             ax.set_ylabel('Intensity')
-            ax.set_title(f"Peak {result['Peak #']}\n2θ={result['Center (2θ)']:.4f}, FWHM={result['FWHM']:.4f}")
+            ax.set_title(f"Peak {result['Peak #']}\n2θ={result['Center (2θ)']:.4f}, FWHM={result['FWHM']:.4f}, Area={result['Area']:.1f}")
             ax.legend(fontsize=8)
             ax.grid(True, alpha=0.3)
 
@@ -271,14 +353,8 @@ class PeakSelector:
         for j in range(n_peaks, len(axs)):
             fig.delaxes(axs[j])
 
-        plt.suptitle(f"{self.filename} - Manual Peak Fitting Results", fontsize=14)
+        plt.suptitle(f"{self.filename} - Individual Peak Fits", fontsize=14)
         plt.tight_layout()
-
-        # Save figure
-        fig_path = os.path.join(self.save_dir, f"{self.filename}_manual_fit.png")
-        plt.savefig(fig_path, dpi=150)
-        print(f"   Figure saved to: {fig_path}")
-
         plt.show()
 
 # ---------- Main function for single file ----------
