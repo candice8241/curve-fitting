@@ -177,7 +177,7 @@ def main():
     save_dir = os.path.join(folder, "fit_output")
     os.makedirs(save_dir, exist_ok=True)
 
-    files = [f for f in os.listdir(folder) if f.endswith(".xy")]
+    files = [f for f in os.listdir(folder) if f.endswith((".xy", ".dat"))]
     files.sort()
 
     all_dfs = []
