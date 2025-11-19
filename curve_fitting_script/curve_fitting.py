@@ -93,12 +93,8 @@ class PeakFittingGUI:
         # Background fitting storage
         self.bg_points = []
         self.bg_markers = []
-        self.bg_fitted = False
-        self.bg_params = None
         self.bg_line = None
         self.bg_connect_line = None  # Line connecting BG points
-        self.bg_type = 'linear'
-        self.bg_order = 2
         self.selecting_bg = False
 
         # Undo stack for tracking actions
@@ -164,27 +160,10 @@ class PeakFittingGUI:
         bg_frame.pack(side=tk.TOP, fill=tk.X, padx=5, pady=2)
         bg_frame.pack_propagate(False)
 
-        bg_label = tk.Label(bg_frame, text="Background Fitting:",
+        bg_label = tk.Label(bg_frame, text="Background:",
                            bg='#E6D5F5', fg='#4B0082',
                            font=('Arial', 10, 'bold'))
         bg_label.pack(side=tk.LEFT, padx=10, pady=10)
-
-        # Background type selection
-        self.bg_type_var = tk.StringVar(value='linear')
-        bg_types = [('Linear', 'linear'), ('Polynomial', 'polynomial'), ('Chebyshev', 'chebyshev')]
-        for text, value in bg_types:
-            rb = tk.Radiobutton(bg_frame, text=text, variable=self.bg_type_var,
-                               value=value, bg='#E6D5F5', fg='#4B0082',
-                               font=('Arial', 9), command=self.on_bg_type_change)
-            rb.pack(side=tk.LEFT, padx=5)
-
-        # Polynomial order
-        tk.Label(bg_frame, text="Order:", bg='#E6D5F5', fg='#4B0082',
-                font=('Arial', 9)).pack(side=tk.LEFT, padx=5)
-        self.bg_order_var = tk.StringVar(value='2')
-        order_combo = ttk.Combobox(bg_frame, textvariable=self.bg_order_var,
-                                   values=['1', '2', '3', '4', '5'], width=3)
-        order_combo.pack(side=tk.LEFT, padx=2)
 
         btn_bg_style = {
             'font': ('Arial', 9, 'bold'),
@@ -199,12 +178,6 @@ class PeakFittingGUI:
                                         command=self.toggle_bg_selection,
                                         state=tk.DISABLED, **btn_bg_style)
         self.btn_select_bg.pack(side=tk.LEFT, padx=10, pady=8)
-
-        self.btn_fit_bg = tk.Button(bg_frame, text="Fit Background",
-                                    bg='#87CEEB', fg='#00008B',
-                                    command=self.fit_background,
-                                    state=tk.DISABLED, **btn_bg_style)
-        self.btn_fit_bg.pack(side=tk.LEFT, padx=5, pady=8)
 
         self.btn_subtract_bg = tk.Button(bg_frame, text="Subtract BG",
                                          bg='#90EE90', fg='#006400',
@@ -299,10 +272,6 @@ class PeakFittingGUI:
         self.ax.set_xlim(new_xlim)
         self.ax.set_ylim(new_ylim)
         self.canvas.draw()
-
-    def on_bg_type_change(self):
-        """Handle background type change"""
-        self.bg_type = self.bg_type_var.get()
 
     def load_file(self):
         """Load XRD data file"""
@@ -399,9 +368,9 @@ class PeakFittingGUI:
 
             self.update_info(f"Background point {len(self.bg_points)} selected at 2theta = {point_x:.4f}\n")
 
-            # Enable fit background if enough points
+            # Enable subtract background if enough points
             if len(self.bg_points) >= 2:
-                self.btn_fit_bg.config(state=tk.NORMAL)
+                self.btn_subtract_bg.config(state=tk.NORMAL)
         elif not self.fitted:
             # Select peaks
             marker, = self.ax.plot(point_x, point_y, '*', color='#FF1493',
@@ -493,77 +462,32 @@ class PeakFittingGUI:
                 self.canvas.draw()
                 self.update_info(f"Undone: Background point {index + 1} removed\n")
 
-                # Disable fit background if not enough points
+                # Disable subtract background if not enough points
                 if len(self.bg_points) < 2:
-                    self.btn_fit_bg.config(state=tk.DISABLED)
+                    self.btn_subtract_bg.config(state=tk.DISABLED)
 
         # Disable undo button if stack is empty
         if not self.undo_stack:
             self.btn_undo.config(state=tk.DISABLED)
 
-    def fit_background(self):
-        """Fit background to selected points"""
+    def subtract_background(self):
+        """Subtract background using linear interpolation between selected points"""
         if len(self.bg_points) < 2:
             messagebox.showwarning("Insufficient Points", "Please select at least 2 background points!")
             return
 
         try:
-            bg_x = np.array([p[0] for p in self.bg_points])
-            bg_y = np.array([p[1] for p in self.bg_points])
+            # Sort background points by x coordinate
+            sorted_points = sorted(self.bg_points, key=lambda p: p[0])
+            bg_x = np.array([p[0] for p in sorted_points])
+            bg_y = np.array([p[1] for p in sorted_points])
 
-            self.bg_type = self.bg_type_var.get()
-            self.bg_order = int(self.bg_order_var.get())
+            # Linear interpolation between points
+            # For x values outside the range, use the nearest endpoint value
+            bg_interp = np.interp(self.x, bg_x, bg_y)
 
-            # Use selected background points' x range for fitting line
-            x_smooth = np.linspace(bg_x.min(), bg_x.max(), 2000)
-
-            if self.bg_type == 'linear':
-                popt, _ = curve_fit(linear_background, bg_x, bg_y)
-                y_bg = linear_background(x_smooth, *popt)
-                self.bg_func = lambda x: linear_background(x, *popt)
-
-            elif self.bg_type == 'polynomial':
-                # Fit polynomial of specified order
-                coeffs = np.polyfit(bg_x, bg_y, self.bg_order)
-                y_bg = np.polyval(coeffs, x_smooth)
-                self.bg_func = lambda x: np.polyval(coeffs, x)
-
-            elif self.bg_type == 'chebyshev':
-                # Fit Chebyshev polynomial
-                p0 = [1.0] * (self.bg_order + 1)
-                popt, _ = curve_fit(chebyshev_background, bg_x, bg_y, p0=p0)
-                y_bg = chebyshev_background(x_smooth, *popt)
-                self.bg_func = lambda x: chebyshev_background(x, *popt)
-
-            # Remove old background line if exists
-            if self.bg_line is not None:
-                self.bg_line.remove()
-
-            # Plot fitted background
-            self.bg_line, = self.ax.plot(x_smooth, y_bg, '--', color='#4169E1',
-                                        linewidth=2.5, label='Background Fit', zorder=5)
-            self.ax.legend(fontsize=10, loc='best', framealpha=0.9)
-            self.canvas.draw()
-
-            self.bg_fitted = True
-            self.btn_subtract_bg.config(state=tk.NORMAL)
-
-            self.update_info(f"Background fitted using {self.bg_type} method (order={self.bg_order})\n")
-            self.status_label.config(text="Background fitted")
-
-        except Exception as e:
-            messagebox.showerror("Fitting Error", f"Failed to fit background:\n{str(e)}")
-            self.update_info(f"Background fitting failed: {str(e)}\n")
-
-    def subtract_background(self):
-        """Subtract fitted background from data"""
-        if not self.bg_fitted:
-            messagebox.showwarning("No Background", "Please fit background first!")
-            return
-
-        try:
             # Subtract background
-            self.y = self.y_original - self.bg_func(self.x)
+            self.y = self.y_original - bg_interp
 
             # Replot data (thinner line)
             self.ax.clear()
@@ -597,9 +521,7 @@ class PeakFittingGUI:
             self.bg_markers = []
             self.bg_line = None
             self.bg_connect_line = None
-            self.bg_fitted = False
             self.btn_subtract_bg.config(state=tk.DISABLED)
-            self.btn_fit_bg.config(state=tk.DISABLED)
 
             self.update_info("Background subtracted from data\n")
             self.status_label.config(text="Background subtracted")
@@ -634,7 +556,6 @@ class PeakFittingGUI:
         self.bg_markers = []
         self.bg_line = None
         self.bg_connect_line = None
-        self.bg_fitted = False
         self.selecting_bg = False
 
         # Clear bg_point-related items from undo stack
@@ -643,7 +564,6 @@ class PeakFittingGUI:
             self.btn_undo.config(state=tk.DISABLED)
 
         self.btn_select_bg.config(bg='#B0A0D0', fg='#2F0060', text="Select BG Points")
-        self.btn_fit_bg.config(state=tk.DISABLED)
         self.btn_subtract_bg.config(state=tk.DISABLED)
 
         if self.x is not None:
