@@ -840,25 +840,39 @@ class PeakFittingGUI:
                                         zorder=5, alpha=0.9)
                 self.fit_lines.append(line1)
 
-            # Plot individual peak components
+            # Plot individual peak components - use group window range for better visibility
             for i in range(len(sorted_peaks)):
                 offset = i * n_params_per_peak
 
-                if use_voigt:
-                    amp, cen, sig, gam = popt[offset:offset+4]
-                    fwhm = 2.355 * sig
-                    plot_range = fwhm * 2
-                    x_peak_smooth = np.linspace(cen - plot_range, cen + plot_range, 300)
+                # Find which group this peak belongs to
+                peak_group_idx = None
+                for g_idx, group in enumerate(peak_groups):
+                    if i in group:
+                        peak_group_idx = g_idx
+                        break
+
+                # Use group window for plotting range
+                if peak_group_idx is not None and peak_group_idx < len(group_windows):
+                    left, right = group_windows[peak_group_idx]
+                    x_peak_smooth = np.linspace(self.x[left], self.x[right], 500)
+                else:
+                    # Fallback to wider range (3x FWHM)
+                    if use_voigt:
+                        amp, cen, sig, gam = popt[offset:offset+4]
+                        fwhm = 2.355 * sig
+                    else:
+                        amp, cen, sig, gam, eta = popt[offset:offset+5]
+                        fwhm = calculate_fwhm(sig, gam, eta)
+                    plot_range = fwhm * 3
+                    x_peak_smooth = np.linspace(cen - plot_range, cen + plot_range, 500)
                     x_peak_smooth = x_peak_smooth[(x_peak_smooth >= self.x.min()) &
                                                    (x_peak_smooth <= self.x.max())]
+
+                if use_voigt:
+                    amp, cen, sig, gam = popt[offset:offset+4]
                     y_component = voigt(x_peak_smooth, amp, cen, sig, gam)
                 else:
                     amp, cen, sig, gam, eta = popt[offset:offset+5]
-                    fwhm = calculate_fwhm(sig, gam, eta)
-                    plot_range = fwhm * 2
-                    x_peak_smooth = np.linspace(cen - plot_range, cen + plot_range, 300)
-                    x_peak_smooth = x_peak_smooth[(x_peak_smooth >= self.x.min()) &
-                                                   (x_peak_smooth <= self.x.max())]
                     y_component = pseudo_voigt(x_peak_smooth, amp, cen, sig, gam, eta)
 
                 # Map back to original peak number
