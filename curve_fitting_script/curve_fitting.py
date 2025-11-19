@@ -245,6 +245,7 @@ class PeakSelector:
         self.bg_line_plot = None  # Background line plot
         self.bg_fitted = False  # Whether background has been fitted
         self.bg_spline = None  # Spline function for background
+        self.bg_range = None  # Range of background (min_x, max_x)
 
     def run(self):
         """Run interactive peak selection with zoom/pan support"""
@@ -518,6 +519,7 @@ class PeakSelector:
         self.bg_mode = False
         self.bg_fitted = False
         self.bg_spline = None
+        self.bg_range = None
 
         self.ax.legend(loc='upper right')
         self.fig.canvas.draw()
@@ -550,6 +552,7 @@ class PeakSelector:
         self.bg_mode = False
         self.bg_fitted = False
         self.bg_spline = None
+        self.bg_range = None
         self.ax.legend(loc='upper right')
         self.fig.canvas.draw()
         print("   Background cleared. Ready for peak selection.")
@@ -586,18 +589,21 @@ class PeakSelector:
                 coeffs = np.polyfit(x_bg, y_bg, degree)
                 self.bg_spline = np.poly1d(coeffs)
 
-        # Plot fitted background
-        x_smooth = np.linspace(self.x.min(), self.x.max(), 500)
+        # Plot fitted background - only within the range of selected points
+        x_smooth = np.linspace(x_bg.min(), x_bg.max(), 500)
         y_smooth = self.bg_spline(x_smooth)
         self.bg_line_plot, = self.ax.plot(x_smooth, y_smooth, 'm-', linewidth=2,
                                            alpha=0.7, label='Fitted BG')
         self.ax.legend(loc='upper right')
 
+        # Store background range for peak fitting
+        self.bg_range = (x_bg.min(), x_bg.max())
+
         self.bg_fitted = True
         self.bg_mode = False  # Exit background selection mode
         self.fig.canvas.draw()
 
-        print(f"   Background fitted with {len(points)} points. Ready for peak selection.")
+        print(f"   Background fitted with {len(points)} points (range: {x_bg.min():.2f} - {x_bg.max():.2f}). Ready for peak selection.")
 
     def fit_peaks_with_spline_bg(self, x_local, y_local, peak_positions):
         """Fit peaks using spline background"""
