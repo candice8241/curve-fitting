@@ -859,12 +859,12 @@ class PeakFittingGUI:
                 is_overlapping = len(group) > 1
 
                 # Create fitting window for this group
-                # Window multiplier: 4×FWHM for overlapping peaks, 3×FWHM for single peaks
+                # Window multiplier: 4×FWHM for overlapping peaks, 2.5×FWHM for single peaks
                 # Overlap mode uses even wider windows
                 if self.overlap_mode:
-                    window_multiplier = 5 if is_overlapping else 4
+                    window_multiplier = 5 if is_overlapping else 3
                 else:
-                    window_multiplier = 4 if is_overlapping else 3
+                    window_multiplier = 4 if is_overlapping else 2.5
 
                 left_center = self.x[min(group_peak_indices)]
                 right_center = self.x[max(group_peak_indices)]
@@ -1074,10 +1074,29 @@ class PeakFittingGUI:
 
                 if use_voigt:
                     y_component = voigt(x_smooth, *params)
+                    peak_center = params[1]  # center
                 else:
                     y_component = pseudo_voigt(x_smooth, *params)
+                    peak_center = params[1]  # center
 
-                y_with_bg = y_component + bg_offset + bg_slope * (x_smooth - x_ref)
+                # For single peaks: only add baseline offset at peak center (no slope)
+                # This prevents long tails due to baseline slope
+                # For overlapping peaks: use full baseline for better visualization
+                peak_group_idx = None
+                for g_idx, group in enumerate(peak_groups):
+                    if i in group:
+                        peak_group_idx = g_idx
+                        break
+
+                is_single_peak = peak_group_idx is not None and len(peak_groups[peak_group_idx]) == 1
+
+                if is_single_peak:
+                    # Single peak: add constant baseline at peak center
+                    baseline_at_center = bg_offset + bg_slope * (peak_center - x_ref)
+                    y_with_bg = y_component + baseline_at_center
+                else:
+                    # Overlapping peaks: add full linear baseline
+                    y_with_bg = y_component + bg_offset + bg_slope * (x_smooth - x_ref)
 
                 original_idx = sorted_indices[i]
                 line_comp, = self.ax.plot(x_smooth, y_with_bg, '--',
