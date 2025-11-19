@@ -572,22 +572,27 @@ class PeakSelector:
         if self.bg_line_plot:
             self.bg_line_plot.remove()
 
-        # Fit spline or polynomial depending on number of points
-        if len(points) <= 3:
+        # Fit smooth background - use low degree polynomial for smooth result
+        # This avoids oscillations between peaks
+        if len(points) == 2:
+            # Linear for 2 points
+            degree = 1
+        elif len(points) <= 4:
             # Linear or quadratic for few points
-            degree = len(points) - 1
+            degree = min(2, len(points) - 1)
+        else:
+            # Use smoothing spline with high smoothing for many points
+            # This keeps the background smooth without following every point exactly
+            try:
+                # High smoothing factor for very smooth curve
+                self.bg_spline = UnivariateSpline(x_bg, y_bg, s=len(points)*10)
+                degree = None  # Mark that we used spline
+            except:
+                degree = 2  # Fallback to quadratic
+
+        if degree is not None:
             coeffs = np.polyfit(x_bg, y_bg, degree)
             self.bg_spline = np.poly1d(coeffs)
-        else:
-            # Smoothing spline for more points
-            # s parameter controls smoothness (0 = interpolate exactly)
-            try:
-                self.bg_spline = UnivariateSpline(x_bg, y_bg, s=len(points)*0.1)
-            except:
-                # Fallback to polynomial
-                degree = min(3, len(points) - 1)
-                coeffs = np.polyfit(x_bg, y_bg, degree)
-                self.bg_spline = np.poly1d(coeffs)
 
         # Plot fitted background - only within the range of selected points
         x_smooth = np.linspace(x_bg.min(), x_bg.max(), 500)
