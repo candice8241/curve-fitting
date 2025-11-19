@@ -191,6 +191,12 @@ class PeakFittingGUI:
                                       state=tk.DISABLED, **btn_bg_style)
         self.btn_clear_bg.pack(side=tk.LEFT, padx=5, pady=8)
 
+        # Coordinate display label in bg_frame
+        self.coord_label = tk.Label(bg_frame, text="",
+                                    bg='#E6D5F5', fg='#4B0082',
+                                    font=('Courier', 9))
+        self.coord_label.pack(side=tk.RIGHT, padx=10, pady=10)
+
         # Main plot area
         plot_frame = tk.Frame(self.master, bg='white')
         plot_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=5, pady=5)
@@ -224,12 +230,6 @@ class PeakFittingGUI:
 
         # Connect mouse motion event for coordinate display
         self.canvas.mpl_connect('motion_notify_event', self.on_mouse_move)
-
-        # Coordinate display label
-        self.coord_label = tk.Label(self.master, text="",
-                                    bg='#F0E6FA', fg='#4B0082',
-                                    font=('Courier', 9))
-        self.coord_label.pack(side=tk.BOTTOM, anchor='w', padx=10)
 
         # Info panel at bottom
         info_frame = tk.Frame(self.master, bg='#F0E6FA', height=80)
@@ -597,8 +597,8 @@ class PeakFittingGUI:
         self.update_info(f"Fitting {len(self.selected_peaks)} peaks...\n")
 
         try:
-            # Background estimate
-            bg0 = np.percentile(self.y, 10)
+            # Background estimate - use minimum for BG-subtracted data
+            bg0 = min(np.percentile(self.y, 5), 0)
             bg1 = 0
 
             # Initial parameters - allow negative bg0 for background-subtracted data
@@ -610,23 +610,40 @@ class PeakFittingGUI:
             x_range = self.x.max() - self.x.min()
             y_range = self.y.max() - self.y.min()
 
+            # Average data spacing
+            dx = np.mean(np.diff(self.x))
+
             for idx in self.selected_peaks:
-                amp_guess = max(self.y[idx] - bg0, y_range * 0.01)  # Ensure positive amplitude
+                # Better amplitude estimation
+                amp_guess = max(self.y[idx] - bg0, y_range * 0.01)
                 cen_guess = self.x[idx]
-                # Estimate sigma based on data spacing
-                sig_guess = x_range * 0.01
-                gam_guess = x_range * 0.01
+
+                # Estimate sigma from local peak width (FWHM ~ 2.355 * sigma)
+                # Look for half-maximum points around peak
+                half_max = (self.y[idx] + bg0) / 2 + bg0
+                left_idx = max(0, idx - 50)
+                right_idx = min(len(self.x), idx + 50)
+
+                # Estimate width from nearby points
+                local_width = dx * 10  # Default width
+                for i in range(idx, left_idx, -1):
+                    if self.y[i] < half_max:
+                        local_width = abs(self.x[idx] - self.x[i]) * 2
+                        break
+
+                sig_guess = max(local_width / 2.355, dx * 2)
+                gam_guess = sig_guess
                 eta_guess = 0.5
 
                 p0.extend([amp_guess, cen_guess, sig_guess, gam_guess, eta_guess])
-                # Wider bounds for sigma and gamma
-                bounds_lower.extend([0, self.x.min(), 1e-6, 1e-6, 0])
-                bounds_upper.extend([np.inf, self.x.max(), x_range, x_range, 1.0])
+                # Bounds based on data range
+                bounds_lower.extend([0, self.x.min(), dx, dx, 0])
+                bounds_upper.extend([y_range * 10, self.x.max(), x_range * 0.5, x_range * 0.5, 1.0])
 
-            # Perform fitting
+            # Perform fitting with reduced maxfev to prevent freezing
             popt, pcov = curve_fit(multi_pseudo_voigt, self.x, self.y,
                                   p0=p0, bounds=(bounds_lower, bounds_upper),
-                                  maxfev=100000)
+                                  maxfev=10000)
 
             # Plot fit
             x_smooth = np.linspace(self.x.min(), self.x.max(), 2000)
