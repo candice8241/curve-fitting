@@ -131,6 +131,9 @@ class PeakFittingGUI:
         # Fitting method
         self.fit_method = tk.StringVar(value="pseudo_voigt")
 
+        # Overlap mode for better handling of overlapping peaks
+        self.overlap_mode = False
+
         self.create_widgets()
 
     def create_widgets(self):
@@ -182,6 +185,12 @@ class PeakFittingGUI:
                                        bg='#4169E1', fg='white',
                                        command=self.auto_find_peaks, state=tk.DISABLED, **btn_style)
         self.btn_auto_find.pack(side=tk.LEFT, padx=5, pady=8)
+
+        self.btn_overlap_mode = tk.Button(control_frame, text="Overlap",
+                                          bg='#FF6B9D', fg='white',
+                                          command=self.toggle_overlap_mode,
+                                          state=tk.DISABLED, **btn_style)
+        self.btn_overlap_mode.pack(side=tk.LEFT, padx=5, pady=8)
 
         self.status_label = tk.Label(control_frame, text="Please load a file to start",
                                      bg='#BA55D3', fg='white',
@@ -392,6 +401,7 @@ class PeakFittingGUI:
             self.btn_select_bg.config(state=tk.NORMAL)
             self.btn_clear_bg.config(state=tk.NORMAL)
             self.btn_auto_find.config(state=tk.NORMAL)
+            self.btn_overlap_mode.config(state=tk.NORMAL)
 
             self.status_label.config(text=f"Loaded: {self.filename}")
             self.update_info(f"File loaded: {self.filename}\nData points: {len(self.x)}\n")
@@ -762,6 +772,16 @@ class PeakFittingGUI:
 
         return peak_groups if peak_groups else None
 
+    def toggle_overlap_mode(self):
+        """Toggle overlap mode for better handling of overlapping peaks"""
+        self.overlap_mode = not self.overlap_mode
+        if self.overlap_mode:
+            self.btn_overlap_mode.config(bg='#32CD32', text="Overlap ON")
+            self.update_info("Overlap mode ON: Using relaxed parameters for overlapping peaks\n")
+        else:
+            self.btn_overlap_mode.config(bg='#FF6B9D', text="Overlap")
+            self.update_info("Overlap mode OFF: Standard fitting parameters\n")
+
     def fit_peaks(self):
         """
         Optimized peak fitting - fits each group separately for better performance
@@ -836,16 +856,23 @@ class PeakFittingGUI:
 
                 group_peak_indices = [sorted_peaks[i] for i in group]
                 group_fwhms = [fwhm_estimates[i] for i in group]
+                is_overlapping = len(group) > 1
 
                 # Create fitting window for this group
-                # Window = peak center ± 3×FWHM (covers ~99% of peak area)
+                # Window multiplier: 4×FWHM for overlapping peaks, 3×FWHM for single peaks
+                # Overlap mode uses even wider windows
+                if self.overlap_mode:
+                    window_multiplier = 5 if is_overlapping else 4
+                else:
+                    window_multiplier = 4 if is_overlapping else 3
+
                 left_center = self.x[min(group_peak_indices)]
                 right_center = self.x[max(group_peak_indices)]
                 left_fwhm = group_fwhms[0]
                 right_fwhm = group_fwhms[-1]
 
-                window_left = left_center - left_fwhm * 3
-                window_right = right_center + right_fwhm * 3
+                window_left = left_center - left_fwhm * window_multiplier
+                window_right = right_center + right_fwhm * window_multiplier
                 window_width = window_right - window_left
 
                 left_idx = max(0, np.searchsorted(self.x, window_left))
@@ -857,13 +884,13 @@ class PeakFittingGUI:
                     avg_fwhm = group_fwhms[0]
                     self.update_info(f"Group {g_idx+1}: Peak {sorted_indices[group[0]]+1}, "
                                    f"FWHM={avg_fwhm:.4f}, Window=[{window_left:.2f}, {window_right:.2f}] "
-                                   f"(±3×FWHM)\n")
+                                   f"(±{window_multiplier}×FWHM)\n")
                 else:
                     avg_fwhm = np.mean(group_fwhms)
                     peak_nums = [sorted_indices[g]+1 for g in group]
                     self.update_info(f"Group {g_idx+1}: Peaks {peak_nums}, "
                                    f"Avg FWHM={avg_fwhm:.4f}, Window=[{window_left:.2f}, {window_right:.2f}] "
-                                   f"(width={window_width:.2f})\n")
+                                   f"(±{window_multiplier}×FWHM, width={window_width:.2f})\n")
 
                 x_fit = self.x[left_idx:right_idx]
                 y_fit = self.y[left_idx:right_idx]
@@ -885,17 +912,30 @@ class PeakFittingGUI:
                     sig_guess = fwhm_est / 2.355
                     gam_guess = fwhm_est / 2
 
-                    local_height = self.y[idx] - baseline
-                    if local_height <= 0:
-                        local_height = np.max(y_fit) * 0.1
+                    # Improved amplitude estimation
+                    peak_intensity = self.y[idx]
+                    local_height = peak_intensity - baseline
 
-                    amp_guess = local_height * sig_guess * np.sqrt(2 * np.pi)
+                    if is_overlapping or self.overlap_mode:
+                        # For overlapping peaks: use higher amplitude guess
+                        amp_guess = peak_intensity * sig_guess * np.sqrt(2 * np.pi) * 1.5
+                    else:
+                        if local_height <= 0:
+                            local_height = np.max(y_fit) * 0.1
+                        amp_guess = local_height * sig_guess * np.sqrt(2 * np.pi)
 
                     y_range = np.max(y_fit) - np.min(y_fit)
                     amp_lower = 0
-                    amp_upper = y_range * sig_guess * np.sqrt(2 * np.pi) * 5
+                    # Higher upper bound for overlapping peaks
+                    amp_multiplier = 10 if (is_overlapping or self.overlap_mode) else 5
+                    amp_upper = y_range * sig_guess * np.sqrt(2 * np.pi) * amp_multiplier
 
-                    center_tolerance = fwhm_est * 0.5
+                    # Relaxed center constraints for overlapping peaks
+                    if is_overlapping or self.overlap_mode:
+                        center_tolerance = fwhm_est * 0.8
+                    else:
+                        center_tolerance = fwhm_est * 0.5
+
                     sig_lower = dx * 0.5
                     sig_upper = fwhm_est * 3
                     gam_lower = dx * 0.5
@@ -950,16 +990,28 @@ class PeakFittingGUI:
 
                 multi_peak_func = make_func(n_group_peaks, x_ref)
 
-                # Perform fitting with reduced iterations
+                # Perform fitting with adaptive iterations
+                # Use more iterations and stricter convergence for overlapping peaks
+                if is_overlapping or self.overlap_mode:
+                    max_iter = 30000
+                    ftol = 1e-9
+                    xtol = 1e-9
+                else:
+                    max_iter = 10000
+                    ftol = 1e-8
+                    xtol = 1e-8
+
                 try:
                     popt, _ = curve_fit(multi_peak_func, x_fit, y_fit,
                                        p0=p0, bounds=(bounds_lower, bounds_upper),
-                                       method='trf', maxfev=10000)
+                                       method='trf', maxfev=max_iter,
+                                       ftol=ftol, xtol=xtol)
                 except Exception:
                     try:
+                        # Fallback to dogbox method for difficult cases
                         popt, _ = curve_fit(multi_peak_func, x_fit, y_fit,
                                            p0=p0, bounds=(bounds_lower, bounds_upper),
-                                           maxfev=20000)
+                                           method='dogbox', maxfev=50000)
                     except Exception as e:
                         self.update_info(f"Group {g_idx+1} fit failed: {str(e)}\n")
                         continue
