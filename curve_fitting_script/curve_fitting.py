@@ -278,7 +278,7 @@ class PeakSelector:
         self.btn_clear_bg = Button(ax_clear_bg, 'Clear BG')
         self.btn_clear_bg.on_clicked(self.on_clear_bg)
 
-        self.btn_multi = Button(ax_multi, 'Fit Multi')
+        self.btn_multi = Button(ax_multi, 'Fit Peak')
         self.btn_multi.on_clicked(self.on_fit_multi_peak)
 
         self.btn_undo = Button(ax_undo, 'Undo')
@@ -302,12 +302,13 @@ class PeakSelector:
         print("- Use toolbar to PAN (hand icon)")
         print("")
         print("Peak Fitting:")
-        print("- LEFT-CLICK: fit single peak (auto background)")
-        print("- CTRL+CLICK: select multiple peaks for multi-peak fit")
+        print("- LEFT-CLICK: fit single peak with auto background")
+        print("- CTRL+CLICK: select peak positions, then click 'Fit Peak'")
+        print("  (works for both single and multiple peaks)")
         print("")
         print("Manual Background:")
-        print("- Click 'Select BG' then click 2 points to define background")
-        print("- After BG is set, click peaks to fit with manual background")
+        print("- Click 'Select BG', then click 2 points for background")
+        print("- Use CTRL+CLICK to select peaks, then 'Fit Peak'")
         print("- Click 'Clear BG' to return to auto background mode")
         print("="*60 + "\n")
 
@@ -510,7 +511,7 @@ class PeakSelector:
         print(f"   Removed last peak. {len(self.fit_lines)} peaks remaining.")
 
     def on_clear(self, event):
-        """Clear all fitted peaks"""
+        """Clear all fitted peaks and background"""
         for fit_data in self.fit_lines:
             for line in fit_data['lines']:
                 line.remove()
@@ -525,8 +526,19 @@ class PeakSelector:
         self.multi_peak_markers = []
         self.multi_peak_positions = []
 
+        # Also clear background
+        for marker in self.bg_markers:
+            marker.remove()
+        self.bg_markers = []
+        self.bg_points = []
+        if self.bg_line_plot:
+            self.bg_line_plot.remove()
+            self.bg_line_plot = None
+        self.bg_mode = False
+
+        self.ax.legend(loc='upper right')
         self.fig.canvas.draw()
-        print("   All fits cleared.")
+        print("   All fits and background cleared.")
 
     def on_select_bg(self, event):
         """Enter background selection mode"""
@@ -567,9 +579,9 @@ class PeakSelector:
             run_peak_fitting(new_file)
 
     def on_fit_multi_peak(self, event):
-        """Fit multiple selected peaks together"""
-        if len(self.multi_peak_positions) < 2:
-            print("   Need at least 2 peaks for multi-peak fitting. Use Ctrl+Click to select.")
+        """Fit selected peaks (single or multiple)"""
+        if len(self.multi_peak_positions) < 1:
+            print("   No peaks selected. Use Ctrl+Click to select peaks first.")
             return
 
         # Sort positions
