@@ -12,6 +12,8 @@ from scipy.optimize import curve_fit
 from scipy.special import wofz
 from scipy.signal import savgol_filter, find_peaks
 from scipy.ndimage import gaussian_filter1d
+from scipy.interpolate import UnivariateSpline
+from sklearn.cluster import DBSCAN
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import os
@@ -98,6 +100,180 @@ def apply_smoothing(y, method='gaussian', **kwargs):
         return apply_savgol_smoothing(y, window_length=window_length, polyorder=polyorder)
     else:
         return y
+
+
+# ---------- DBSCAN clustering for peak grouping ----------
+def cluster_peaks_dbscan(peak_positions, eps=None, min_samples=1):
+    """
+    Use DBSCAN density clustering to group nearby peaks.
+
+    Parameters:
+    -----------
+    peak_positions : array
+        1D array of peak positions (e.g., 2theta values)
+    eps : float, optional
+        Maximum distance between two peaks to be in the same group.
+        If None, automatically estimated from data.
+    min_samples : int
+        Minimum number of peaks to form a cluster.
+
+    Returns:
+    --------
+    labels : array
+        Cluster labels for each peak (-1 means noise/outlier)
+    n_clusters : int
+        Number of clusters found
+    """
+    if len(peak_positions) == 0:
+        return np.array([]), 0
+
+    if len(peak_positions) == 1:
+        return np.array([0]), 1
+
+    # Reshape for sklearn
+    X = np.array(peak_positions).reshape(-1, 1)
+
+    # Auto-estimate eps if not provided
+    if eps is None:
+        # Use median distance between adjacent peaks as eps
+        sorted_pos = np.sort(peak_positions)
+        if len(sorted_pos) > 1:
+            distances = np.diff(sorted_pos)
+            eps = np.median(distances) * 1.5  # 1.5x median distance
+        else:
+            eps = 1.0
+
+    # Run DBSCAN
+    clustering = DBSCAN(eps=eps, min_samples=min_samples).fit(X)
+    labels = clustering.labels_
+
+    # Handle noise points (label -1) by assigning them to nearest cluster
+    noise_mask = labels == -1
+    if np.any(noise_mask) and np.any(~noise_mask):
+        for i in np.where(noise_mask)[0]:
+            # Find nearest non-noise point
+            non_noise_idx = np.where(~noise_mask)[0]
+            distances = np.abs(peak_positions[non_noise_idx] - peak_positions[i])
+            nearest = non_noise_idx[np.argmin(distances)]
+            labels[i] = labels[nearest]
+    elif np.all(noise_mask):
+        # All points are noise, treat as single cluster
+        labels = np.zeros(len(labels), dtype=int)
+
+    n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
+
+    return labels, n_clusters
+
+
+# ---------- Global background fitting ----------
+def fit_global_background(x, y, peak_indices, method='spline', smoothing_factor=None):
+    """
+    Fit a global smooth background to the data, excluding peak regions.
+
+    Parameters:
+    -----------
+    x : array
+        X data (2theta values)
+    y : array
+        Y data (intensity values)
+    peak_indices : list
+        Indices of detected peaks
+    method : str
+        'spline' for smooth spline, 'piecewise' for piecewise linear
+    smoothing_factor : float, optional
+        Smoothing factor for spline (larger = smoother)
+
+    Returns:
+    --------
+    background : array
+        Background values at each x point
+    bg_points : list of tuples
+        (x, y) coordinates of background anchor points
+    """
+    if len(peak_indices) == 0:
+        # No peaks, return a simple baseline
+        return np.full_like(y, np.median(y)), []
+
+    # Sort peak indices
+    sorted_peaks = sorted(peak_indices)
+
+    # Find background anchor points (minima between peaks and at edges)
+    bg_x = []
+    bg_y = []
+
+    # Left edge - find minimum in first region
+    first_peak = sorted_peaks[0]
+    left_region_end = max(0, first_peak - 5)
+    if left_region_end > 0:
+        left_min_idx = np.argmin(y[:left_region_end+1])
+        bg_x.append(x[left_min_idx])
+        bg_y.append(y[left_min_idx])
+    else:
+        bg_x.append(x[0])
+        bg_y.append(y[0])
+
+    # Find minima between adjacent peaks
+    for i in range(len(sorted_peaks) - 1):
+        idx1 = sorted_peaks[i]
+        idx2 = sorted_peaks[i + 1]
+
+        if idx2 > idx1 + 1:
+            # Find minimum between peaks
+            between_region = y[idx1:idx2+1]
+            min_local = np.argmin(between_region)
+            min_idx = idx1 + min_local
+            bg_x.append(x[min_idx])
+            bg_y.append(y[min_idx])
+
+    # Right edge - find minimum in last region
+    last_peak = sorted_peaks[-1]
+    right_region_start = min(len(x) - 1, last_peak + 5)
+    if right_region_start < len(x) - 1:
+        right_min_idx = right_region_start + np.argmin(y[right_region_start:])
+        bg_x.append(x[right_min_idx])
+        bg_y.append(y[right_min_idx])
+    else:
+        bg_x.append(x[-1])
+        bg_y.append(y[-1])
+
+    bg_x = np.array(bg_x)
+    bg_y = np.array(bg_y)
+
+    # Sort by x
+    sort_idx = np.argsort(bg_x)
+    bg_x = bg_x[sort_idx]
+    bg_y = bg_y[sort_idx]
+
+    # Remove duplicates
+    unique_mask = np.concatenate([[True], np.diff(bg_x) > 0])
+    bg_x = bg_x[unique_mask]
+    bg_y = bg_y[unique_mask]
+
+    bg_points = list(zip(bg_x, bg_y))
+
+    if len(bg_x) < 2:
+        return np.full_like(y, np.mean(bg_y) if len(bg_y) > 0 else np.median(y)), bg_points
+
+    if method == 'spline' and len(bg_x) >= 4:
+        # Smooth spline interpolation
+        if smoothing_factor is None:
+            # Auto-determine smoothing factor
+            smoothing_factor = len(bg_x) * 0.5
+
+        try:
+            spline = UnivariateSpline(bg_x, bg_y, s=smoothing_factor, k=3)
+            background = spline(x)
+            # Ensure background doesn't go above data at anchor points
+            background = np.clip(background, None, np.max(y))
+        except Exception:
+            # Fallback to linear interpolation
+            background = np.interp(x, bg_x, bg_y)
+    else:
+        # Piecewise linear interpolation
+        background = np.interp(x, bg_x, bg_y)
+
+    return background, bg_points
+
 
 # ---------- Peak profile functions ----------
 def pseudo_voigt(x, amplitude, center, sigma, gamma, eta):
@@ -1161,7 +1337,18 @@ class PeakFittingGUI:
                                    key=lambda i: self.x[self.selected_peaks[i]])
             sorted_peaks = [self.selected_peaks[i] for i in sorted_indices]
 
-            # Step 1: Estimate FWHM for each peak
+            # Step 1: Fit global background first
+            self.update_info("Fitting global background...\n")
+            global_bg, global_bg_points = fit_global_background(
+                self.x, self.y, sorted_peaks,
+                method='spline' if len(sorted_peaks) >= 3 else 'piecewise'
+            )
+
+            # Subtract global background
+            y_nobg = self.y - global_bg
+            self.update_info(f"Global background fitted with {len(global_bg_points)} anchor points\n")
+
+            # Step 2: Estimate FWHM for each peak (using background-subtracted data)
             fwhm_estimates = []
             baseline_estimates = []
 
@@ -1170,36 +1357,38 @@ class PeakFittingGUI:
                 left = max(0, idx - window_size)
                 right = min(len(self.x), idx + window_size)
                 x_local = self.x[left:right]
-                y_local = self.y[left:right]
+                y_local = y_nobg[left:right]  # Use background-subtracted data
                 local_peak_idx = idx - left
                 fwhm, baseline = estimate_fwhm_robust(x_local, y_local, local_peak_idx)
                 fwhm_estimates.append(fwhm)
                 baseline_estimates.append(baseline)
 
-            # Step 2: Group peaks based on distance
+            # Step 3: Group peaks using DBSCAN clustering
+            peak_positions = np.array([self.x[idx] for idx in sorted_peaks])
+
+            # Calculate eps based on average FWHM
+            avg_fwhm = np.mean(fwhm_estimates)
+            eps = avg_fwhm * self.group_distance_threshold
+
+            cluster_labels, n_clusters = cluster_peaks_dbscan(peak_positions, eps=eps)
+
+            # Convert cluster labels to peak groups
             peak_groups = []
-            current_group = [0]
+            for cluster_id in range(max(cluster_labels) + 1):
+                group = [i for i, label in enumerate(cluster_labels) if label == cluster_id]
+                if group:
+                    peak_groups.append(group)
 
-            for i in range(1, len(sorted_peaks)):
-                prev_idx = sorted_peaks[i-1]
-                curr_idx = sorted_peaks[i]
-                distance = abs(self.x[curr_idx] - self.x[prev_idx])
-                avg_fwhm = (fwhm_estimates[i-1] + fwhm_estimates[i]) / 2
+            # Sort groups by position
+            peak_groups.sort(key=lambda g: self.x[sorted_peaks[g[0]]])
 
-                # Use configurable threshold for grouping
-                if distance < avg_fwhm * self.group_distance_threshold:
-                    current_group.append(i)
-                else:
-                    peak_groups.append(current_group)
-                    current_group = [i]
+            self.update_info(f"DBSCAN clustering: {n_clusters} groups (eps={eps:.4f})\n")
 
-            peak_groups.append(current_group)
-
-            # Report overlapping peaks
+            # Report grouped peaks
             for group in peak_groups:
                 if len(group) > 1:
                     original_nums = [sorted_indices[g] + 1 for g in group]
-                    self.update_info(f"Peaks {original_nums} grouped together (distance < {self.group_distance_threshold}*FWHM)\n")
+                    self.update_info(f"Peaks {original_nums} grouped by DBSCAN clustering\n")
 
             use_voigt = (fit_method == "voigt")
             n_params_per_peak = 4 if use_voigt else 5
@@ -1207,9 +1396,14 @@ class PeakFittingGUI:
             # Store all results
             all_popt = {}  # peak_index -> parameters
             group_windows = []
-            group_backgrounds = []  # Store background info for each group
 
-            # Step 3: Fit each group separately
+            # Store global background info for plotting
+            global_bg_info = {
+                'background': global_bg,
+                'bg_points': global_bg_points
+            }
+
+            # Step 4: Fit each group separately (using background-subtracted data)
             for g_idx, group in enumerate(peak_groups):
                 self.status_label.config(text=f"Fitting group {g_idx+1}/{len(peak_groups)}...")
                 self.master.update()
@@ -1218,11 +1412,11 @@ class PeakFittingGUI:
                 group_fwhms = [fwhm_estimates[i] for i in group]
                 is_overlapping = len(group) > 1
 
-                # Create fitting window for this group
+                # Create fitting window for this group - limited to peak region
                 if self.overlap_mode:
-                    window_multiplier = 5 if is_overlapping else 3
-                else:
                     window_multiplier = 4 if is_overlapping else 2.5
+                else:
+                    window_multiplier = 3 if is_overlapping else 2
 
                 left_center = self.x[min(group_peak_indices)]
                 right_center = self.x[max(group_peak_indices)]
@@ -1237,39 +1431,20 @@ class PeakFittingGUI:
                 group_windows.append((left_idx, right_idx))
 
                 x_fit = self.x[left_idx:right_idx]
-                y_fit = self.y[left_idx:right_idx]
+                # Use global background-subtracted data
+                y_fit_nobg = y_nobg[left_idx:right_idx]
 
                 if len(x_fit) < 5:
                     continue
 
-                # Step 3a: Find minima between peaks for piecewise background
-                # Convert global indices to local indices within the fitting window
-                local_peak_indices = [idx - left_idx for idx in group_peak_indices]
-
-                # Find minima points for this group
-                minima_points = find_group_minima(x_fit, y_fit, local_peak_indices)
-
-                # Create piecewise linear background
-                bg_piecewise = create_piecewise_background(x_fit, minima_points)
-
-                # Store background info
-                group_backgrounds.append({
-                    'minima_points': minima_points,
-                    'bg_values': bg_piecewise,
-                    'x_fit': x_fit
-                })
-
-                # Subtract piecewise background for fitting
-                y_fit_nobg = y_fit - bg_piecewise
-
-                # Display info about background
+                # Display info about fitting window
                 if len(group) == 1:
                     self.update_info(f"Group {g_idx+1}: Peak {sorted_indices[group[0]]+1}, "
-                                   f"using 2-point background\n")
+                                   f"window [{window_left:.2f}, {window_right:.2f}]\n")
                 else:
                     peak_nums = [sorted_indices[g]+1 for g in group]
                     self.update_info(f"Group {g_idx+1}: Peaks {peak_nums}, "
-                                   f"using {len(minima_points)}-point piecewise background\n")
+                                   f"window [{window_left:.2f}, {window_right:.2f}]\n")
 
                 # Build parameters for this group
                 p0 = []
@@ -1375,32 +1550,30 @@ class PeakFittingGUI:
                         'window': (left_idx, right_idx)
                     }
 
-            # Step 4: Plot results
+            # Step 5: Plot results
             colors = plt.cm.tab10(np.linspace(0, 1, len(sorted_peaks)))
 
-            # Plot background lines for each group
-            for g_idx, bg_info in enumerate(group_backgrounds):
-                minima_points = bg_info['minima_points']
-                if len(minima_points) >= 2:
-                    bg_x = [p[0] for p in minima_points]
-                    bg_y = [p[1] for p in minima_points]
-                    # Plot background line
-                    bg_line, = self.ax.plot(bg_x, bg_y, 'o-', color='#4169E1',
-                                           linewidth=1.5, markersize=4, alpha=0.6,
-                                           label='Background' if g_idx == 0 else None,
-                                           zorder=3)
-                    self.fit_lines.append(bg_line)
+            # Plot global background
+            if len(global_bg_points) >= 2:
+                bg_x = [p[0] for p in global_bg_points]
+                bg_y = [p[1] for p in global_bg_points]
+                # Plot background anchor points
+                bg_markers, = self.ax.plot(bg_x, bg_y, 'o', color='#4169E1',
+                                          markersize=6, alpha=0.8, zorder=3)
+                self.fit_lines.append(bg_markers)
+                # Plot smooth background line
+                bg_line, = self.ax.plot(self.x, global_bg, '-', color='#4169E1',
+                                       linewidth=1.5, alpha=0.6,
+                                       label='Global Background', zorder=3)
+                self.fit_lines.append(bg_line)
 
             # Plot total fit for each group
             for g_idx, (left, right) in enumerate(group_windows):
                 x_region = self.x[left:right]
                 x_smooth = np.linspace(x_region.min(), x_region.max(), 400)
 
-                # Get background for this region
-                if g_idx < len(group_backgrounds):
-                    bg_smooth = create_piecewise_background(x_smooth, group_backgrounds[g_idx]['minima_points'])
-                else:
-                    bg_smooth = np.zeros_like(x_smooth)
+                # Get global background for this region
+                bg_smooth = np.interp(x_smooth, self.x, global_bg)
 
                 # Sum all peaks in this group
                 y_total = bg_smooth.copy()
@@ -1429,7 +1602,6 @@ class PeakFittingGUI:
                     continue
 
                 params = all_popt[i]['params']
-                g_idx = all_popt[i]['group_idx']
                 left, right = all_popt[i]['window']
 
                 x_smooth = np.linspace(self.x[left], self.x[right], 400)
@@ -1439,12 +1611,8 @@ class PeakFittingGUI:
                 else:
                     y_component = pseudo_voigt(x_smooth, *params)
 
-                # Add background
-                if g_idx < len(group_backgrounds):
-                    bg_smooth = create_piecewise_background(x_smooth, group_backgrounds[g_idx]['minima_points'])
-                else:
-                    bg_smooth = np.zeros_like(x_smooth)
-
+                # Add global background
+                bg_smooth = np.interp(x_smooth, self.x, global_bg)
                 y_with_bg = y_component + bg_smooth
 
                 original_idx = sorted_indices[i]
