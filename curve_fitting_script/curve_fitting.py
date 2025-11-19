@@ -100,6 +100,9 @@ class PeakFittingGUI:
         self.bg_order = 2
         self.selecting_bg = False
 
+        # Undo stack for tracking actions
+        self.undo_stack = []
+
         # Create GUI components
         self.create_widgets()
 
@@ -143,6 +146,11 @@ class PeakFittingGUI:
                                        bg='#FF8C00', fg='white',
                                        command=self.clear_fit, state=tk.DISABLED, **btn_style)
         self.btn_clear_fit.pack(side=tk.LEFT, padx=5, pady=8)
+
+        self.btn_undo = tk.Button(control_frame, text="Undo",
+                                  bg='#DDA0DD', fg='#4B0082',
+                                  command=self.undo_action, state=tk.DISABLED, **btn_style)
+        self.btn_undo.pack(side=tk.LEFT, padx=5, pady=8)
 
         # Status label
         self.status_label = tk.Label(control_frame, text="Please load a file to start",
@@ -324,6 +332,8 @@ class PeakFittingGUI:
             self.reset_peaks()
             self.clear_background()
             self.fitted = False
+            self.undo_stack = []
+            self.btn_undo.config(state=tk.DISABLED)
 
             # Plot data - using line instead of points (thinner line)
             self.ax.clear()
@@ -370,13 +380,17 @@ class PeakFittingGUI:
         point_y = self.y[idx]
 
         if self.selecting_bg:
-            # Select background points
+            # Select background points (smaller marker size)
             marker, = self.ax.plot(point_x, point_y, 's', color='#4169E1',
-                                  markersize=12, markeredgecolor='#FFD700',
-                                  markeredgewidth=2, zorder=10)
+                                  markersize=6, markeredgecolor='#FFD700',
+                                  markeredgewidth=1, zorder=10)
             self.bg_points.append((point_x, point_y))
             self.bg_markers.append(marker)
             self.canvas.draw()
+
+            # Add to undo stack
+            self.undo_stack.append(('bg_point', len(self.bg_points) - 1))
+            self.btn_undo.config(state=tk.NORMAL)
 
             self.update_info(f"Background point {len(self.bg_points)} selected at 2theta = {point_x:.4f}\n")
 
@@ -399,6 +413,10 @@ class PeakFittingGUI:
             self.peak_texts.append(text)
             self.canvas.draw()
 
+            # Add to undo stack
+            self.undo_stack.append(('peak', len(self.selected_peaks) - 1))
+            self.btn_undo.config(state=tk.NORMAL)
+
             self.update_info(f"Peak {len(self.selected_peaks)} selected at 2theta = {point_x:.4f}\n")
             self.status_label.config(text=f"{len(self.selected_peaks)} peak(s) selected")
 
@@ -413,6 +431,48 @@ class PeakFittingGUI:
             self.btn_select_bg.config(bg='#B0A0D0', fg='#2F0060', text="Select BG Points")
             self.status_label.config(text=f"{len(self.bg_points)} BG points selected")
 
+    def undo_action(self):
+        """Undo the last peak or background point selection"""
+        if not self.undo_stack:
+            return
+
+        action_type, index = self.undo_stack.pop()
+
+        if action_type == 'peak':
+            # Undo peak selection
+            if self.selected_peaks and index == len(self.selected_peaks) - 1:
+                self.selected_peaks.pop()
+                marker = self.peak_markers.pop()
+                text = self.peak_texts.pop()
+                try:
+                    marker.remove()
+                    text.remove()
+                except:
+                    pass
+                self.canvas.draw()
+                self.update_info(f"Undone: Peak {index + 1} removed\n")
+                self.status_label.config(text=f"{len(self.selected_peaks)} peak(s) selected")
+
+        elif action_type == 'bg_point':
+            # Undo background point selection
+            if self.bg_points and index == len(self.bg_points) - 1:
+                self.bg_points.pop()
+                marker = self.bg_markers.pop()
+                try:
+                    marker.remove()
+                except:
+                    pass
+                self.canvas.draw()
+                self.update_info(f"Undone: Background point {index + 1} removed\n")
+
+                # Disable fit background if not enough points
+                if len(self.bg_points) < 2:
+                    self.btn_fit_bg.config(state=tk.DISABLED)
+
+        # Disable undo button if stack is empty
+        if not self.undo_stack:
+            self.btn_undo.config(state=tk.DISABLED)
+
     def fit_background(self):
         """Fit background to selected points"""
         if len(self.bg_points) < 2:
@@ -426,7 +486,8 @@ class PeakFittingGUI:
             self.bg_type = self.bg_type_var.get()
             self.bg_order = int(self.bg_order_var.get())
 
-            x_smooth = np.linspace(self.x.min(), self.x.max(), 2000)
+            # Use selected background points' x range for fitting line
+            x_smooth = np.linspace(bg_x.min(), bg_x.max(), 2000)
 
             if self.bg_type == 'linear':
                 popt, _ = curve_fit(linear_background, bg_x, bg_y)
@@ -538,6 +599,11 @@ class PeakFittingGUI:
         self.bg_line = None
         self.bg_fitted = False
         self.selecting_bg = False
+
+        # Clear bg_point-related items from undo stack
+        self.undo_stack = [item for item in self.undo_stack if item[0] != 'bg_point']
+        if not self.undo_stack:
+            self.btn_undo.config(state=tk.DISABLED)
 
         self.btn_select_bg.config(bg='#B0A0D0', fg='#2F0060', text="Select BG Points")
         self.btn_fit_bg.config(state=tk.DISABLED)
@@ -695,6 +761,11 @@ class PeakFittingGUI:
         self.fit_lines = []
         self.fitted = False
         self.fit_results = None
+
+        # Clear peak-related items from undo stack
+        self.undo_stack = [item for item in self.undo_stack if item[0] != 'peak']
+        if not self.undo_stack:
+            self.btn_undo.config(state=tk.DISABLED)
 
         if self.x is not None:
             self.ax.set_title(f'{self.filename}\nClick on peaks to select | Use toolbar or scroll to zoom/pan',
