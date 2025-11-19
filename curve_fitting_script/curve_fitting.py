@@ -645,19 +645,15 @@ class PeakFittingGUI:
                                   p0=p0, bounds=(bounds_lower, bounds_upper),
                                   maxfev=10000)
 
-            # Plot fit
+            # Plot fit result only (no separate lines for background and individual peaks)
             x_smooth = np.linspace(self.x.min(), self.x.max(), 2000)
             y_fit = multi_pseudo_voigt(x_smooth, *popt)
-            bg_line = popt[0] + popt[1] * x_smooth
 
-            line1, = self.ax.plot(x_smooth, y_fit, color='#BA55D3', linewidth=3,
-                                label='Total Fit', zorder=5)
-            line2, = self.ax.plot(x_smooth, bg_line, '--', color='#FF69B4',
-                                linewidth=2, label='Background', zorder=4)
+            line1, = self.ax.plot(x_smooth, y_fit, color='#BA55D3', linewidth=2,
+                                label='Fit', zorder=5)
+            self.fit_lines.append(line1)
 
-            self.fit_lines.extend([line1, line2])
-
-            # Extract and plot individual peaks
+            # Extract fitting results
             n_peaks = len(self.selected_peaks)
             results = []
 
@@ -666,13 +662,6 @@ class PeakFittingGUI:
             for i in range(n_peaks):
                 offset = 2 + i * 5
                 amp, cen, sig, gam, eta = popt[offset:offset+5]
-
-                # Plot individual peak
-                y_single = pseudo_voigt(x_smooth, amp, cen, sig, gam, eta)
-                line, = self.ax.plot(x_smooth, y_single + popt[0], ':',
-                                    linewidth=2, alpha=0.8,
-                                    label=f'Peak {i+1}', zorder=3)
-                self.fit_lines.append(line)
 
                 # Calculate metrics
                 fwhm = calculate_fwhm(sig, gam, eta)
