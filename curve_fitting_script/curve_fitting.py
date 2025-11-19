@@ -248,8 +248,8 @@ class PeakSelector:
         # Create figure with space for buttons
         self.fig = plt.figure(figsize=(14, 8))
 
-        # Main plot area
-        self.ax = self.fig.add_axes([0.1, 0.15, 0.85, 0.75])
+        # Main plot area (adjusted for two button rows)
+        self.ax = self.fig.add_axes([0.1, 0.18, 0.85, 0.72])
         self.ax.plot(self.x, self.y, 'b-', linewidth=0.8, label='Data')
         self.ax.set_xlabel('2θ (degree)', fontsize=12)
         self.ax.set_ylabel('Intensity', fontsize=12)
@@ -257,31 +257,38 @@ class PeakSelector:
         self.ax.grid(True, alpha=0.3)
         self.ax.legend(loc='upper right')
 
-        # Add buttons
-        ax_finish = self.fig.add_axes([0.82, 0.02, 0.08, 0.04])
-        ax_clear = self.fig.add_axes([0.7, 0.02, 0.08, 0.04])
-        ax_undo = self.fig.add_axes([0.58, 0.02, 0.08, 0.04])
-        ax_multi = self.fig.add_axes([0.42, 0.02, 0.12, 0.04])
-        ax_bg = self.fig.add_axes([0.25, 0.02, 0.12, 0.04])
-        ax_clear_bg = self.fig.add_axes([0.1, 0.02, 0.1, 0.04])
+        # Add buttons (two rows)
+        # Top row
+        ax_open = self.fig.add_axes([0.1, 0.06, 0.1, 0.04])
+        ax_bg = self.fig.add_axes([0.25, 0.06, 0.1, 0.04])
+        ax_clear_bg = self.fig.add_axes([0.4, 0.06, 0.1, 0.04])
 
-        self.btn_finish = Button(ax_finish, 'Save')
-        self.btn_finish.on_clicked(self.on_finish)
+        # Bottom row
+        ax_multi = self.fig.add_axes([0.1, 0.01, 0.1, 0.04])
+        ax_undo = self.fig.add_axes([0.25, 0.01, 0.08, 0.04])
+        ax_clear = self.fig.add_axes([0.38, 0.01, 0.1, 0.04])
+        ax_finish = self.fig.add_axes([0.53, 0.01, 0.08, 0.04])
 
-        self.btn_clear = Button(ax_clear, 'Clear All')
-        self.btn_clear.on_clicked(self.on_clear)
-
-        self.btn_undo = Button(ax_undo, 'Undo')
-        self.btn_undo.on_clicked(self.on_undo)
-
-        self.btn_multi = Button(ax_multi, 'Fit Multi')
-        self.btn_multi.on_clicked(self.on_fit_multi_peak)
+        self.btn_open = Button(ax_open, 'Open File')
+        self.btn_open.on_clicked(self.on_open_file)
 
         self.btn_bg = Button(ax_bg, 'Select BG')
         self.btn_bg.on_clicked(self.on_select_bg)
 
         self.btn_clear_bg = Button(ax_clear_bg, 'Clear BG')
         self.btn_clear_bg.on_clicked(self.on_clear_bg)
+
+        self.btn_multi = Button(ax_multi, 'Fit Multi')
+        self.btn_multi.on_clicked(self.on_fit_multi_peak)
+
+        self.btn_undo = Button(ax_undo, 'Undo')
+        self.btn_undo.on_clicked(self.on_undo)
+
+        self.btn_clear = Button(ax_clear, 'Clear All')
+        self.btn_clear.on_clicked(self.on_clear)
+
+        self.btn_finish = Button(ax_finish, 'Save')
+        self.btn_finish.on_clicked(self.on_finish)
 
         # Connect mouse click event
         self.cid = self.fig.canvas.mpl_connect('button_press_event', self.on_click)
@@ -361,7 +368,7 @@ class PeakSelector:
         # Background selection mode
         if self.bg_mode:
             self.bg_points.append((x_click, y_click))
-            marker, = self.ax.plot(x_click, y_click, 'ms', markersize=10, alpha=0.8)
+            marker, = self.ax.plot(x_click, y_click, 'ms', markersize=6, alpha=0.8)
             self.bg_markers.append(marker)
 
             if len(self.bg_points) == 2:
@@ -390,8 +397,8 @@ class PeakSelector:
             # Add to multi-peak selection
             self.multi_peak_positions.append(x_click)
 
-            # Mark with cyan marker (temporary)
-            marker, = self.ax.plot(x_click, y_click, 'c^', markersize=12, alpha=0.8)
+            # Mark with cyan marker (temporary) - smaller size
+            marker, = self.ax.plot(x_click, y_click, 'c^', markersize=7, alpha=0.8)
             self.multi_peak_markers.append(marker)
             self.fig.canvas.draw()
 
@@ -549,6 +556,15 @@ class PeakSelector:
         self.ax.legend(loc='upper right')
         self.fig.canvas.draw()
         print("   Manual background cleared. Using auto background mode.")
+
+    def on_open_file(self, event):
+        """Open a new file"""
+        new_file = select_file_dialog(os.path.dirname(self.save_dir))
+        if new_file:
+            # Close current figure
+            plt.close(self.fig)
+            # Open new file
+            run_peak_fitting(new_file)
 
     def on_fit_multi_peak(self, event):
         """Fit multiple selected peaks together"""
