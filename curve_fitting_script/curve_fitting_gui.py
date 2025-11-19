@@ -764,7 +764,7 @@ class PeakFittingGUI:
 
     def fit_peaks(self):
         """
-        Improved peak fitting with better parameter estimation and overlapping peak handling
+        Optimized peak fitting - fits each group separately for better performance
         """
         if len(self.selected_peaks) == 0:
             messagebox.showwarning("No Peaks", "Please select at least one peak first!")
@@ -783,25 +783,22 @@ class PeakFittingGUI:
                                    key=lambda i: self.x[self.selected_peaks[i]])
             sorted_peaks = [self.selected_peaks[i] for i in sorted_indices]
 
-            # Step 1: Estimate FWHM for each peak using robust method
+            # Step 1: Estimate FWHM for each peak
             fwhm_estimates = []
             baseline_estimates = []
 
             for idx in sorted_peaks:
-                # Extract local window around peak
                 window_size = 50
                 left = max(0, idx - window_size)
                 right = min(len(self.x), idx + window_size)
-
                 x_local = self.x[left:right]
                 y_local = self.y[left:right]
                 local_peak_idx = idx - left
-
                 fwhm, baseline = estimate_fwhm_robust(x_local, y_local, local_peak_idx)
                 fwhm_estimates.append(fwhm)
                 baseline_estimates.append(baseline)
 
-            # Step 2: Group overlapping peaks (within 2x average FWHM)
+            # Step 2: Group overlapping peaks
             peak_groups = []
             current_group = [0]
 
@@ -823,248 +820,236 @@ class PeakFittingGUI:
             for group in peak_groups:
                 if len(group) > 1:
                     original_nums = [sorted_indices[g] + 1 for g in group]
-                    self.update_info(f"Peaks {original_nums} will be fit together (overlapping)\n")
-
-            # Step 3: Create fitting window for each group
-            group_windows = []
-            for group in peak_groups:
-                group_peak_indices = [sorted_peaks[i] for i in group]
-                group_fwhms = [fwhm_estimates[i] for i in group]
-
-                # Window extends 3x FWHM beyond outermost peaks
-                left_center = self.x[min(group_peak_indices)]
-                right_center = self.x[max(group_peak_indices)]
-                left_fwhm = group_fwhms[0]
-                right_fwhm = group_fwhms[-1]
-
-                window_left = left_center - left_fwhm * 3
-                window_right = right_center + right_fwhm * 3
-
-                # Find indices
-                left_idx = np.searchsorted(self.x, window_left)
-                right_idx = np.searchsorted(self.x, window_right)
-
-                left_idx = max(0, left_idx)
-                right_idx = min(len(self.x), right_idx)
-
-                group_windows.append((left_idx, right_idx))
-
-            # Step 4: Build combined fitting mask
-            fit_mask = np.zeros(len(self.x), dtype=bool)
-            for left, right in group_windows:
-                fit_mask[left:right] = True
-
-            x_fit = self.x[fit_mask]
-            y_fit = self.y[fit_mask]
-
-            # Step 5: Initial parameters with better estimation
-            p0 = []
-            bounds_lower = []
-            bounds_upper = []
+                    self.update_info(f"Peaks {original_nums} fit together\n")
 
             use_voigt = (fit_method == "voigt")
             n_params_per_peak = 4 if use_voigt else 5
 
-            for i, idx in enumerate(sorted_peaks):
-                cen_guess = self.x[idx]
-                fwhm_est = fwhm_estimates[i]
-                baseline = baseline_estimates[i]
+            # Store all results
+            all_popt = {}  # peak_index -> parameters
+            group_windows = []
 
-                # Better sigma/gamma estimation
-                sig_guess = fwhm_est / 2.355
-                gam_guess = fwhm_est / 2
+            # Step 3: Fit each group separately
+            for g_idx, group in enumerate(peak_groups):
+                self.status_label.config(text=f"Fitting group {g_idx+1}/{len(peak_groups)}...")
+                self.master.update()
 
-                # Better amplitude estimation (height above local baseline)
-                local_height = self.y[idx] - baseline
-                if local_height <= 0:
-                    local_height = np.max(self.y) * 0.1
+                group_peak_indices = [sorted_peaks[i] for i in group]
+                group_fwhms = [fwhm_estimates[i] for i in group]
 
-                # Scale amplitude guess based on profile normalization
-                amp_guess = local_height * sig_guess * np.sqrt(2 * np.pi)
+                # Create fitting window for this group
+                left_center = self.x[min(group_peak_indices)]
+                right_center = self.x[max(group_peak_indices)]
+                window_left = left_center - group_fwhms[0] * 3
+                window_right = right_center + group_fwhms[-1] * 3
 
-                # Bounds
-                y_range = np.max(self.y) - np.min(self.y)
-                amp_lower = 0
-                amp_upper = y_range * sig_guess * np.sqrt(2 * np.pi) * 5
+                left_idx = max(0, np.searchsorted(self.x, window_left))
+                right_idx = min(len(self.x), np.searchsorted(self.x, window_right))
+                group_windows.append((left_idx, right_idx))
 
-                # Allow more freedom for center (0.5 * FWHM)
-                center_tolerance = fwhm_est * 0.5
+                x_fit = self.x[left_idx:right_idx]
+                y_fit = self.y[left_idx:right_idx]
 
-                # Sigma/gamma bounds
-                sig_lower = dx * 0.5
-                sig_upper = fwhm_est * 3
-                gam_lower = dx * 0.5
-                gam_upper = fwhm_est * 3
-
-                if use_voigt:
-                    p0.extend([amp_guess, cen_guess, sig_guess, gam_guess])
-                    bounds_lower.extend([amp_lower, cen_guess - center_tolerance, sig_lower, gam_lower])
-                    bounds_upper.extend([amp_upper, cen_guess + center_tolerance, sig_upper, gam_upper])
-                else:
-                    eta_guess = 0.5
-                    p0.extend([amp_guess, cen_guess, sig_guess, gam_guess, eta_guess])
-                    bounds_lower.extend([amp_lower, cen_guess - center_tolerance, sig_lower, gam_lower, 0])
-                    bounds_upper.extend([amp_upper, cen_guess + center_tolerance, sig_upper, gam_upper, 1.0])
-
-            # Add baseline parameters (linear: offset + slope)
-            # Estimate initial baseline from edges of fit region
-            edge_n = max(3, len(x_fit) // 20)
-            bg_offset_guess = (np.mean(y_fit[:edge_n]) + np.mean(y_fit[-edge_n:])) / 2
-            bg_slope_guess = (np.mean(y_fit[-edge_n:]) - np.mean(y_fit[:edge_n])) / (x_fit[-1] - x_fit[0])
-
-            p0.extend([bg_offset_guess, bg_slope_guess])
-            bounds_lower.extend([-np.max(np.abs(self.y)), -np.inf])
-            bounds_upper.extend([np.max(self.y), np.inf])
-
-            # Step 6: Define fitting function with baseline
-            x_ref = x_fit[0]  # Reference point for baseline
-
-            if use_voigt:
-                def multi_peak_func(x, *params):
-                    n_peaks = (len(params) - 2) // 4
-                    y = np.zeros_like(x)
-                    for i in range(n_peaks):
-                        offset = i * 4
-                        amp, cen, sig, gam = params[offset:offset+4]
-                        y += voigt(x, amp, cen, sig, gam)
-                    # Add baseline
-                    bg_offset, bg_slope = params[-2], params[-1]
-                    y += bg_offset + bg_slope * (x - x_ref)
-                    return y
-            else:
-                def multi_peak_func(x, *params):
-                    n_peaks = (len(params) - 2) // 5
-                    y = np.zeros_like(x)
-                    for i in range(n_peaks):
-                        offset = i * 5
-                        amp, cen, sig, gam, eta = params[offset:offset+5]
-                        y += pseudo_voigt(x, amp, cen, sig, gam, eta)
-                    # Add baseline
-                    bg_offset, bg_slope = params[-2], params[-1]
-                    y += bg_offset + bg_slope * (x - x_ref)
-                    return y
-
-            # Step 7: Perform fitting
-            try:
-                popt, pcov = curve_fit(multi_peak_func, x_fit, y_fit,
-                                      p0=p0, bounds=(bounds_lower, bounds_upper),
-                                      method='trf', loss='soft_l1',
-                                      maxfev=200000)
-            except Exception:
-                # Fallback
-                popt, pcov = curve_fit(multi_peak_func, x_fit, y_fit,
-                                      p0=p0, bounds=(bounds_lower, bounds_upper),
-                                      maxfev=200000)
-
-            # Step 8: Plot results
-            # Plot total fit for each group window
-            plotted_regions = set()
-            for left, right in group_windows:
-                region_key = (left, right)
-                if region_key in plotted_regions:
+                if len(x_fit) < 5:
                     continue
-                plotted_regions.add(region_key)
 
+                # Build parameters for this group only
+                p0 = []
+                bounds_lower = []
+                bounds_upper = []
+
+                for i in group:
+                    idx = sorted_peaks[i]
+                    cen_guess = self.x[idx]
+                    fwhm_est = fwhm_estimates[i]
+                    baseline = baseline_estimates[i]
+
+                    sig_guess = fwhm_est / 2.355
+                    gam_guess = fwhm_est / 2
+
+                    local_height = self.y[idx] - baseline
+                    if local_height <= 0:
+                        local_height = np.max(y_fit) * 0.1
+
+                    amp_guess = local_height * sig_guess * np.sqrt(2 * np.pi)
+
+                    y_range = np.max(y_fit) - np.min(y_fit)
+                    amp_lower = 0
+                    amp_upper = y_range * sig_guess * np.sqrt(2 * np.pi) * 5
+
+                    center_tolerance = fwhm_est * 0.5
+                    sig_lower = dx * 0.5
+                    sig_upper = fwhm_est * 3
+                    gam_lower = dx * 0.5
+                    gam_upper = fwhm_est * 3
+
+                    if use_voigt:
+                        p0.extend([amp_guess, cen_guess, sig_guess, gam_guess])
+                        bounds_lower.extend([amp_lower, cen_guess - center_tolerance, sig_lower, gam_lower])
+                        bounds_upper.extend([amp_upper, cen_guess + center_tolerance, sig_upper, gam_upper])
+                    else:
+                        p0.extend([amp_guess, cen_guess, sig_guess, gam_guess, 0.5])
+                        bounds_lower.extend([amp_lower, cen_guess - center_tolerance, sig_lower, gam_lower, 0])
+                        bounds_upper.extend([amp_upper, cen_guess + center_tolerance, sig_upper, gam_upper, 1.0])
+
+                # Add baseline for this group
+                edge_n = max(3, len(x_fit) // 20)
+                bg_offset_guess = (np.mean(y_fit[:edge_n]) + np.mean(y_fit[-edge_n:])) / 2
+                bg_slope_guess = (np.mean(y_fit[-edge_n:]) - np.mean(y_fit[:edge_n])) / (x_fit[-1] - x_fit[0]) if len(x_fit) > 1 else 0
+
+                p0.extend([bg_offset_guess, bg_slope_guess])
+                bounds_lower.extend([-np.max(np.abs(y_fit)) * 2, -np.inf])
+                bounds_upper.extend([np.max(y_fit) * 2, np.inf])
+
+                x_ref = x_fit[0]
+
+                # Define fitting function for this group
+                n_group_peaks = len(group)
+                if use_voigt:
+                    def make_func(n_peaks, x_ref):
+                        def func(x, *params):
+                            y = np.zeros_like(x)
+                            for i in range(n_peaks):
+                                offset = i * 4
+                                amp, cen, sig, gam = params[offset:offset+4]
+                                y += voigt(x, amp, cen, sig, gam)
+                            bg_offset, bg_slope = params[-2], params[-1]
+                            y += bg_offset + bg_slope * (x - x_ref)
+                            return y
+                        return func
+                else:
+                    def make_func(n_peaks, x_ref):
+                        def func(x, *params):
+                            y = np.zeros_like(x)
+                            for i in range(n_peaks):
+                                offset = i * 5
+                                amp, cen, sig, gam, eta = params[offset:offset+5]
+                                y += pseudo_voigt(x, amp, cen, sig, gam, eta)
+                            bg_offset, bg_slope = params[-2], params[-1]
+                            y += bg_offset + bg_slope * (x - x_ref)
+                            return y
+                        return func
+
+                multi_peak_func = make_func(n_group_peaks, x_ref)
+
+                # Perform fitting with reduced iterations
+                try:
+                    popt, _ = curve_fit(multi_peak_func, x_fit, y_fit,
+                                       p0=p0, bounds=(bounds_lower, bounds_upper),
+                                       method='trf', maxfev=10000)
+                except Exception:
+                    try:
+                        popt, _ = curve_fit(multi_peak_func, x_fit, y_fit,
+                                           p0=p0, bounds=(bounds_lower, bounds_upper),
+                                           maxfev=20000)
+                    except Exception as e:
+                        self.update_info(f"Group {g_idx+1} fit failed: {str(e)}\n")
+                        continue
+
+                # Store results for each peak in this group
+                for j, i in enumerate(group):
+                    offset = j * n_params_per_peak
+                    all_popt[i] = {
+                        'params': popt[offset:offset+n_params_per_peak],
+                        'baseline': (popt[-2], popt[-1], x_ref),
+                        'window': (left_idx, right_idx)
+                    }
+
+            # Step 4: Plot results
+            colors = plt.cm.tab10(np.linspace(0, 1, len(sorted_peaks)))
+
+            # Plot total fit for each group
+            for g_idx, (left, right) in enumerate(group_windows):
                 x_region = self.x[left:right]
-                x_smooth = np.linspace(x_region.min(), x_region.max(), 500)
-                y_fit_smooth = multi_peak_func(x_smooth, *popt)
+                # Reduced points for faster plotting
+                x_smooth = np.linspace(x_region.min(), x_region.max(), 200)
 
-                if len(plotted_regions) == 1:
-                    line1, = self.ax.plot(x_smooth, y_fit_smooth, color='#FF0000', linewidth=1.5,
+                # Sum all peaks in this group
+                y_total = np.zeros_like(x_smooth)
+                group = peak_groups[g_idx]
+
+                if len(group) == 0 or group[0] not in all_popt:
+                    continue
+
+                bg_offset, bg_slope, x_ref = all_popt[group[0]]['baseline']
+                y_total += bg_offset + bg_slope * (x_smooth - x_ref)
+
+                for i in group:
+                    if i not in all_popt:
+                        continue
+                    params = all_popt[i]['params']
+                    if use_voigt:
+                        y_total += voigt(x_smooth, *params)
+                    else:
+                        y_total += pseudo_voigt(x_smooth, *params)
+
+                if g_idx == 0:
+                    line1, = self.ax.plot(x_smooth, y_total, color='#FF0000', linewidth=1.5,
                                         label='Total Fit', zorder=5, alpha=0.9)
                 else:
-                    line1, = self.ax.plot(x_smooth, y_fit_smooth, color='#FF0000', linewidth=1.5,
+                    line1, = self.ax.plot(x_smooth, y_total, color='#FF0000', linewidth=1.5,
                                         zorder=5, alpha=0.9)
                 self.fit_lines.append(line1)
 
             # Plot individual peak components
-            colors = plt.cm.tab10(np.linspace(0, 1, len(sorted_peaks)))
-
             for i in range(len(sorted_peaks)):
-                offset = i * n_params_per_peak
+                if i not in all_popt:
+                    continue
 
-                # Find group window for this peak
-                peak_group_idx = None
-                for g_idx, group in enumerate(peak_groups):
-                    if i in group:
-                        peak_group_idx = g_idx
-                        break
+                params = all_popt[i]['params']
+                left, right = all_popt[i]['window']
+                bg_offset, bg_slope, x_ref = all_popt[i]['baseline']
 
-                if peak_group_idx is not None and peak_group_idx < len(group_windows):
-                    left, right = group_windows[peak_group_idx]
-                    x_peak_smooth = np.linspace(self.x[left], self.x[right], 500)
-                else:
-                    if use_voigt:
-                        amp, cen, sig, gam = popt[offset:offset+4]
-                        fwhm = 2.355 * sig
-                    else:
-                        amp, cen, sig, gam, eta = popt[offset:offset+5]
-                        fwhm = calculate_fwhm(sig, gam, eta)
-                    plot_range = fwhm * 4
-                    x_peak_smooth = np.linspace(cen - plot_range, cen + plot_range, 500)
-                    x_peak_smooth = x_peak_smooth[(x_peak_smooth >= self.x.min()) &
-                                                   (x_peak_smooth <= self.x.max())]
+                x_smooth = np.linspace(self.x[left], self.x[right], 200)
 
                 if use_voigt:
-                    amp, cen, sig, gam = popt[offset:offset+4]
-                    y_component = voigt(x_peak_smooth, amp, cen, sig, gam)
+                    y_component = voigt(x_smooth, *params)
                 else:
-                    amp, cen, sig, gam, eta = popt[offset:offset+5]
-                    y_component = pseudo_voigt(x_peak_smooth, amp, cen, sig, gam, eta)
+                    y_component = pseudo_voigt(x_smooth, *params)
 
-                # Add baseline to component for visualization
-                bg_offset, bg_slope = popt[-2], popt[-1]
-                y_component_with_bg = y_component + bg_offset + bg_slope * (x_peak_smooth - x_ref)
+                y_with_bg = y_component + bg_offset + bg_slope * (x_smooth - x_ref)
 
                 original_idx = sorted_indices[i]
-                line_comp, = self.ax.plot(x_peak_smooth, y_component_with_bg, '--',
+                line_comp, = self.ax.plot(x_smooth, y_with_bg, '--',
                                          color=colors[i], linewidth=1.2, alpha=0.7, zorder=4,
                                          label=f'Peak {original_idx+1}')
                 self.fit_lines.append(line_comp)
 
-            # Step 9: Extract and display results
+            # Step 5: Extract results
             results = []
             info_msg = f"Fitting Results ({fit_method}):\n" + "="*50 + "\n"
 
             for i in range(len(sorted_peaks)):
-                offset = i * n_params_per_peak
                 original_idx = sorted_indices[i]
 
+                if i not in all_popt:
+                    continue
+
+                params = all_popt[i]['params']
+
                 if use_voigt:
-                    amp, cen, sig, gam = popt[offset:offset+4]
+                    amp, cen, sig, gam = params
                     fwhm = 2.355 * sig
                     area = amp
                     eta = "N/A"
-
-                    results.append({
-                        'Peak': original_idx + 1,
-                        'Center_2theta': cen,
-                        'FWHM': fwhm,
-                        'Area': area,
-                        'Amplitude': amp,
-                        'Sigma': sig,
-                        'Gamma': gam,
-                        'Eta': eta
-                    })
                 else:
-                    amp, cen, sig, gam, eta = popt[offset:offset+5]
+                    amp, cen, sig, gam, eta = params
                     fwhm = calculate_fwhm(sig, gam, eta)
                     area = calculate_area(amp, sig, gam, eta)
 
-                    results.append({
-                        'Peak': original_idx + 1,
-                        'Center_2theta': cen,
-                        'FWHM': fwhm,
-                        'Area': area,
-                        'Amplitude': amp,
-                        'Sigma': sig,
-                        'Gamma': gam,
-                        'Eta': eta
-                    })
+                results.append({
+                    'Peak': original_idx + 1,
+                    'Center_2theta': cen,
+                    'FWHM': fwhm,
+                    'Area': area,
+                    'Amplitude': amp,
+                    'Sigma': sig,
+                    'Gamma': gam,
+                    'Eta': eta
+                })
 
                 info_msg += f"Peak {original_idx+1}: 2theta={cen:.4f}, FWHM={fwhm:.5f}, Area={area:.1f}\n"
 
-            # Sort results by peak number
             results.sort(key=lambda r: r['Peak'])
 
             self.fit_results = pd.DataFrame(results)
@@ -1100,9 +1085,8 @@ class PeakFittingGUI:
 
         except Exception as e:
             import traceback
-            error_msg = traceback.format_exc()
             messagebox.showerror("Fitting Error", f"Failed to fit peaks:\n{str(e)}")
-            self.update_info(f"Fitting failed: {error_msg}\n")
+            self.update_info(f"Fitting failed: {traceback.format_exc()}\n")
             self.status_label.config(text="Fitting failed")
 
     def clear_fit(self):
