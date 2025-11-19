@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 from matplotlib.widgets import Button
 from scipy.optimize import curve_fit
 from scipy.integrate import trapezoid
+from scipy.interpolate import UnivariateSpline
 import os
 import pandas as pd
 from scipy.special import wofz
@@ -242,6 +243,8 @@ class PeakSelector:
         self.bg_points = []   # Background points (x, y)
         self.bg_markers = []  # Background markers
         self.bg_line_plot = None  # Background line plot
+        self.bg_fitted = False  # Whether background has been fitted
+        self.bg_spline = None  # Spline function for background
 
     def run(self):
         """Run interactive peak selection with zoom/pan support"""
@@ -258,24 +261,28 @@ class PeakSelector:
         self.ax.legend(loc='upper right')
 
         # Add buttons (two rows)
-        # Top row
-        ax_open = self.fig.add_axes([0.1, 0.06, 0.1, 0.04])
-        ax_bg = self.fig.add_axes([0.25, 0.06, 0.1, 0.04])
-        ax_clear_bg = self.fig.add_axes([0.4, 0.06, 0.1, 0.04])
+        # Top row - Background controls
+        ax_open = self.fig.add_axes([0.1, 0.06, 0.08, 0.04])
+        ax_bg = self.fig.add_axes([0.2, 0.06, 0.08, 0.04])
+        ax_fit_bg = self.fig.add_axes([0.3, 0.06, 0.08, 0.04])
+        ax_clear_bg = self.fig.add_axes([0.4, 0.06, 0.08, 0.04])
 
-        # Bottom row
-        ax_multi = self.fig.add_axes([0.1, 0.01, 0.1, 0.04])
-        ax_undo = self.fig.add_axes([0.25, 0.01, 0.08, 0.04])
-        ax_clear = self.fig.add_axes([0.38, 0.01, 0.1, 0.04])
-        ax_finish = self.fig.add_axes([0.53, 0.01, 0.08, 0.04])
+        # Bottom row - Peak controls
+        ax_multi = self.fig.add_axes([0.1, 0.01, 0.08, 0.04])
+        ax_undo = self.fig.add_axes([0.2, 0.01, 0.08, 0.04])
+        ax_clear = self.fig.add_axes([0.3, 0.01, 0.08, 0.04])
+        ax_finish = self.fig.add_axes([0.4, 0.01, 0.08, 0.04])
 
-        self.btn_open = Button(ax_open, 'Open File')
+        self.btn_open = Button(ax_open, 'Open')
         self.btn_open.on_clicked(self.on_open_file)
 
-        self.btn_bg = Button(ax_bg, 'Select BG')
+        self.btn_bg = Button(ax_bg, 'Sel BG')
         self.btn_bg.on_clicked(self.on_select_bg)
 
-        self.btn_clear_bg = Button(ax_clear_bg, 'Clear BG')
+        self.btn_fit_bg = Button(ax_fit_bg, 'Fit BG')
+        self.btn_fit_bg.on_clicked(self.on_fit_bg)
+
+        self.btn_clear_bg = Button(ax_clear_bg, 'Clr BG')
         self.btn_clear_bg.on_clicked(self.on_clear_bg)
 
         self.btn_multi = Button(ax_multi, 'Fit Peak')
@@ -284,7 +291,7 @@ class PeakSelector:
         self.btn_undo = Button(ax_undo, 'Undo')
         self.btn_undo.on_clicked(self.on_undo)
 
-        self.btn_clear = Button(ax_clear, 'Clear All')
+        self.btn_clear = Button(ax_clear, 'Clear')
         self.btn_clear.on_clicked(self.on_clear)
 
         self.btn_finish = Button(ax_finish, 'Save')
@@ -302,12 +309,10 @@ class PeakSelector:
         print("- Use toolbar to PAN (hand icon)")
         print("")
         print("Workflow:")
-        print("1. Click 'Select BG' to enter background mode")
-        print("   - Click 2+ points to define background line")
-        print("   - Click 'Clear BG' to exit background mode")
-        print("2. Click on peak positions (shown as cyan triangles)")
-        print("3. Click 'Fit Peak' to fit selected peaks")
-        print("   (works for single or multiple peaks)")
+        print("1. Click 'Sel BG' → click background points")
+        print("2. Click 'Fit BG' to fit smooth curve through points")
+        print("3. Click on peak positions (cyan triangles)")
+        print("4. Click 'Fit Peak' to fit peaks")
         print("="*60 + "\n")
 
         plt.show(block=True)
@@ -367,28 +372,11 @@ class PeakSelector:
         # Background selection mode - stays in this mode until user clicks other button
         if self.bg_mode:
             self.bg_points.append((x_click, y_click))
-            marker, = self.ax.plot(x_click, y_click, 'ms', markersize=6, alpha=0.8)
+            marker, = self.ax.plot(x_click, y_click, 'ms', markersize=5, alpha=0.8)
             self.bg_markers.append(marker)
-
-            if len(self.bg_points) >= 2:
-                # Draw/update background line using first and last point
-                x1, y1 = self.bg_points[0]
-                x2, y2 = self.bg_points[-1]
-                x_bg = np.array([min(x1, x2), max(x1, x2)])
-                slope = (y2 - y1) / (x2 - x1) if x2 != x1 else 0
-                intercept = y1 - slope * x1
-                y_bg = intercept + slope * x_bg
-
-                if self.bg_line_plot:
-                    self.bg_line_plot.remove()
-                self.bg_line_plot, = self.ax.plot(x_bg, y_bg, 'm-', linewidth=2, alpha=0.7, label='Manual BG')
-                self.ax.legend(loc='upper right')
-
-                print(f"   Background updated: ({x1:.3f}, {y1:.1f}) to ({x2:.3f}, {y2:.1f})")
-            else:
-                print(f"   Background point 1 at 2θ = {x_click:.4f}")
-
             self.fig.canvas.draw()
+
+            print(f"   BG point {len(self.bg_points)} at 2θ = {x_click:.4f}")
             return
 
         # Peak selection mode - add to peak positions (no Ctrl needed)
@@ -528,10 +516,12 @@ class PeakSelector:
             self.bg_line_plot.remove()
             self.bg_line_plot = None
         self.bg_mode = False
+        self.bg_fitted = False
+        self.bg_spline = None
 
         self.ax.legend(loc='upper right')
         self.fig.canvas.draw()
-        print("   All fits and background cleared.")
+        print("   All cleared.")
 
     def on_select_bg(self, event):
         """Enter background selection mode"""
@@ -558,9 +548,105 @@ class PeakSelector:
             self.bg_line_plot = None
 
         self.bg_mode = False
+        self.bg_fitted = False
+        self.bg_spline = None
         self.ax.legend(loc='upper right')
         self.fig.canvas.draw()
-        print("   Manual background cleared. Using auto background mode.")
+        print("   Background cleared. Ready for peak selection.")
+
+    def on_fit_bg(self, event):
+        """Fit smooth curve through selected background points"""
+        if len(self.bg_points) < 2:
+            print("   Need at least 2 background points!")
+            return
+
+        # Sort points by x
+        points = sorted(self.bg_points, key=lambda p: p[0])
+        x_bg = np.array([p[0] for p in points])
+        y_bg = np.array([p[1] for p in points])
+
+        # Remove old background line
+        if self.bg_line_plot:
+            self.bg_line_plot.remove()
+
+        # Fit spline or polynomial depending on number of points
+        if len(points) <= 3:
+            # Linear or quadratic for few points
+            degree = len(points) - 1
+            coeffs = np.polyfit(x_bg, y_bg, degree)
+            self.bg_spline = np.poly1d(coeffs)
+        else:
+            # Smoothing spline for more points
+            # s parameter controls smoothness (0 = interpolate exactly)
+            try:
+                self.bg_spline = UnivariateSpline(x_bg, y_bg, s=len(points)*0.1)
+            except:
+                # Fallback to polynomial
+                degree = min(3, len(points) - 1)
+                coeffs = np.polyfit(x_bg, y_bg, degree)
+                self.bg_spline = np.poly1d(coeffs)
+
+        # Plot fitted background
+        x_smooth = np.linspace(self.x.min(), self.x.max(), 500)
+        y_smooth = self.bg_spline(x_smooth)
+        self.bg_line_plot, = self.ax.plot(x_smooth, y_smooth, 'm-', linewidth=2,
+                                           alpha=0.7, label='Fitted BG')
+        self.ax.legend(loc='upper right')
+
+        self.bg_fitted = True
+        self.bg_mode = False  # Exit background selection mode
+        self.fig.canvas.draw()
+
+        print(f"   Background fitted with {len(points)} points. Ready for peak selection.")
+
+    def fit_peaks_with_spline_bg(self, x_local, y_local, peak_positions):
+        """Fit peaks using spline background"""
+        n_peaks = len(peak_positions)
+
+        # Subtract spline background
+        bg = self.bg_spline(x_local)
+        y_subtracted = y_local - bg
+
+        # Initial guesses
+        p0 = []
+        bounds_lower = []
+        bounds_upper = []
+
+        for pos in peak_positions:
+            idx = np.argmin(np.abs(x_local - pos))
+            search_range = min(10, len(x_local)//4)
+            left_idx = max(0, idx - search_range)
+            right_idx = min(len(x_local), idx + search_range)
+            local_max_idx = left_idx + np.argmax(y_subtracted[left_idx:right_idx])
+
+            amp_guess = max(y_subtracted[local_max_idx], 1)
+            cen_guess = x_local[local_max_idx]
+            sig_guess = 0.05
+            gam_guess = 0.05
+            eta_guess = 0.5
+
+            p0.extend([amp_guess, cen_guess, sig_guess, gam_guess, eta_guess])
+            bounds_lower.extend([0, x_local.min(), 0.001, 0.001, 0])
+            bounds_upper.extend([np.inf, x_local.max(), 1.0, 1.0, 1.0])
+
+        # Fitting function for peaks only
+        def multi_peak_no_bg(x, *params):
+            y = np.zeros_like(x)
+            n = len(params) // 5
+            for i in range(n):
+                offset = i * 5
+                amp, cen, sig, gam, eta = params[offset:offset+5]
+                y += pseudo_voigt(x, amp, cen, sig, gam, eta)
+            return y
+
+        try:
+            popt, pcov = curve_fit(multi_peak_no_bg, x_local, y_subtracted,
+                                   p0=p0, bounds=(bounds_lower, bounds_upper),
+                                   maxfev=200000)
+            return list(popt), True
+        except Exception as e:
+            print(f"   Fit failed: {e}")
+            return None, False
 
     def on_open_file(self, event):
         """Open a new file"""
@@ -597,27 +683,35 @@ class PeakSelector:
         x_local = self.x[left:right]
         y_local = self.y[left:right]
 
-        print(f"   Fitting {n_peaks} peaks together...")
+        print(f"   Fitting {n_peaks} peak(s)...")
 
-        # Fit multiple peaks with manual or auto background
-        if len(self.bg_points) == 2:
-            # Use manual background
-            x1, y1 = self.bg_points[0]
-            x2, y2 = self.bg_points[1]
-            bg_slope = (y2 - y1) / (x2 - x1) if x2 != x1 else 0
-            bg_intercept = y1 - bg_slope * x1
-            popt, success = fit_multi_peak_with_fixed_bg(x_local, y_local, positions, bg_intercept, bg_slope)
+        # Fit peaks with manual spline or auto background
+        if self.bg_fitted and self.bg_spline is not None:
+            # Use spline background
+            popt, success = self.fit_peaks_with_spline_bg(x_local, y_local, positions)
+            if success:
+                # Background is from spline
+                x_smooth = np.linspace(x_local.min(), x_local.max(), 500)
+                bg_line = self.bg_spline(x_smooth)
+                # Reconstruct total fit
+                y_fit = bg_line.copy()
+                for i in range(n_peaks):
+                    offset = i * 5
+                    amp, cen, sig, gam, eta = popt[offset:offset+5]
+                    y_fit += pseudo_voigt(x_smooth, amp, cen, sig, gam, eta)
+                # For storage compatibility, prepend dummy bg params
+                popt = [0, 0] + list(popt)
+                bg0, bg1 = 0, 0  # Dummy values, actual bg is from spline
         else:
             # Auto background
             popt, success = fit_multi_peak(x_local, y_local, positions)
+            if success:
+                bg0, bg1 = popt[0], popt[1]
+                x_smooth = np.linspace(x_local.min(), x_local.max(), 500)
+                y_fit = multi_pseudo_voigt(x_smooth, *popt)
+                bg_line = bg0 + bg1 * x_smooth
 
         if success:
-            bg0, bg1 = popt[0], popt[1]
-
-            # Plot results
-            x_smooth = np.linspace(x_local.min(), x_local.max(), 500)
-            y_fit = multi_pseudo_voigt(x_smooth, *popt)
-            bg_line = bg0 + bg1 * x_smooth
 
             # Plot total fit and background
             fit_line, = self.ax.plot(x_smooth, y_fit, 'r-', linewidth=2, alpha=0.8)
