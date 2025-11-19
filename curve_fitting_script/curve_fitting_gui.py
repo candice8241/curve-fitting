@@ -696,10 +696,24 @@ class PeakFittingGUI:
 
             peak_groups.append(current_group)
 
+            # For grouped peaks, refine shoulder detection and FWHM estimates
+            for group in peak_groups:
+                if len(group) > 1:
+                    # Find the main peak (highest intensity) in this group
+                    group_peaks = [sorted_peaks[i] for i in group]
+                    main_peak_local_idx = np.argmax([self.y[idx] for idx in group_peaks])
+                    main_peak_fwhm = fwhm_estimates[group[main_peak_local_idx]]
+
+                    # Mark other peaks as shoulders and use main peak's FWHM
+                    for local_i, global_i in enumerate(group):
+                        if local_i != main_peak_local_idx:
+                            is_shoulder[global_i] = True
+                            # Use main peak's FWHM as reference for shoulder
+                            fwhm_estimates[global_i] = main_peak_fwhm * 0.8
+
             # Report overlapping peaks
             for group in peak_groups:
                 if len(group) > 1:
-                    peak_nums = [sorted_indices.index(g) + 1 for g in group]
                     # Map back to original peak numbers
                     original_nums = [sorted_indices[g] + 1 for g in group]
                     self.update_info(f"Peaks {original_nums} will be fit together (overlapping)\n")
@@ -764,35 +778,50 @@ class PeakFittingGUI:
 
             for i, idx in enumerate(sorted_peaks):
                 cen_guess = self.x[idx]
-                amp_guess = self.y[idx] - y_min
-
-                # For shoulder peaks, use smaller amplitude guess
-                if is_shoulder[i]:
-                    amp_guess = amp_guess * 0.5
-
-                if amp_guess <= 0:
-                    amp_guess = y_range * 0.1
-
                 fwhm_estimate = fwhm_estimates[i]
                 sig_guess = fwhm_estimate / 2.355
                 gam_guess = fwhm_estimate / 2
 
-                # Allow more center movement for shoulder peaks
+                # For shoulder peaks, estimate amplitude differently
                 if is_shoulder[i]:
-                    center_tolerance = fwhm_estimate * 1.0
+                    # Find the main peak in the same group
+                    main_peak_height = y_range * 0.3  # Default
+                    for group in peak_groups:
+                        if i in group:
+                            group_peaks = [sorted_peaks[g] for g in group]
+                            main_peak_height = max([self.y[p] - y_min for p in group_peaks])
+                            break
+
+                    # Shoulder amplitude: estimate as fraction of main peak
+                    # Use the difference between this point and a baseline estimate
+                    local_height = self.y[idx] - y_min
+                    amp_guess = local_height * 0.3  # Start with 30% of local height
+                    if amp_guess < main_peak_height * 0.05:
+                        amp_guess = main_peak_height * 0.1  # At least 10% of main peak
+
+                    # Very relaxed bounds for shoulder
+                    amp_lower = y_range * 0.001  # Very small lower bound
+                    amp_upper = main_peak_height * 2  # Can be up to 2x main peak
+                    center_tolerance = fwhm_estimate * 1.5  # More freedom to move
                 else:
+                    amp_guess = self.y[idx] - y_min
+                    if amp_guess <= 0:
+                        amp_guess = y_range * 0.1
+
+                    amp_lower = amp_guess * 0.01
+                    amp_upper = amp_guess * 100
                     center_tolerance = fwhm_estimate * 0.5
 
                 if use_voigt:
                     p0.extend([amp_guess, cen_guess, sig_guess, gam_guess])
-                    bounds_lower.extend([amp_guess * 0.001, cen_guess - center_tolerance, dx * 0.1, dx * 0.1])
-                    bounds_upper.extend([amp_guess * 100, cen_guess + center_tolerance,
+                    bounds_lower.extend([amp_lower, cen_guess - center_tolerance, dx * 0.1, dx * 0.1])
+                    bounds_upper.extend([amp_upper, cen_guess + center_tolerance,
                                        fwhm_estimate * 5, fwhm_estimate * 5])
                 else:
                     eta_guess = 0.5
                     p0.extend([amp_guess, cen_guess, sig_guess, gam_guess, eta_guess])
-                    bounds_lower.extend([amp_guess * 0.001, cen_guess - center_tolerance, dx * 0.1, dx * 0.1, 0])
-                    bounds_upper.extend([amp_guess * 100, cen_guess + center_tolerance,
+                    bounds_lower.extend([amp_lower, cen_guess - center_tolerance, dx * 0.1, dx * 0.1, 0])
+                    bounds_upper.extend([amp_upper, cen_guess + center_tolerance,
                                        fwhm_estimate * 5, fwhm_estimate * 5, 1.0])
 
             # Define fitting function
