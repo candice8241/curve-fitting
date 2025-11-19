@@ -93,6 +93,37 @@ def fit_single_peak(x_local, y_local):
         print(f"   Fit failed: {e}")
         return None, False
 
+# ---------- Fit single peak with fixed background ----------
+def fit_single_peak_with_fixed_bg(x_local, y_local, bg_intercept, bg_slope):
+    """
+    Fit a single peak with user-defined fixed background
+    Returns: fitted parameters in same format as fit_single_peak
+    """
+    # Subtract the fixed background
+    bg = bg_intercept + bg_slope * x_local
+    y_subtracted = y_local - bg
+
+    # Initial guesses for peak only
+    amplitude_guess = np.max(y_subtracted)
+    center_guess = x_local[np.argmax(y_subtracted)]
+    sigma_guess = 0.05
+    gamma_guess = 0.05
+    eta_guess = 0.5
+
+    p0 = [amplitude_guess, center_guess, sigma_guess, gamma_guess, eta_guess]
+    bounds_lower = [0, x_local.min(), 0.001, 0.001, 0]
+    bounds_upper = [np.inf, x_local.max(), 1.0, 1.0, 1.0]
+
+    try:
+        popt, pcov = curve_fit(pseudo_voigt, x_local, y_subtracted,
+                               p0=p0, bounds=(bounds_lower, bounds_upper),
+                               maxfev=100000)
+        # Return in same format as fit_single_peak: [amp, cen, sig, gam, eta, bg0, bg1]
+        return list(popt) + [bg_intercept, bg_slope], True
+    except Exception as e:
+        print(f"   Fit failed: {e}")
+        return None, False
+
 # ---------- Fit multiple peaks ----------
 def fit_multi_peak(x_local, y_local, peak_positions):
     """
@@ -137,6 +168,61 @@ def fit_multi_peak(x_local, y_local, peak_positions):
         print(f"   Multi-peak fit failed: {e}")
         return None, False
 
+# ---------- Fit multiple peaks with fixed background ----------
+def fit_multi_peak_with_fixed_bg(x_local, y_local, peak_positions, bg_intercept, bg_slope):
+    """
+    Fit multiple peaks with user-defined fixed background
+    Returns: fitted parameters in same format as fit_multi_peak
+    """
+    n_peaks = len(peak_positions)
+
+    # Subtract the fixed background
+    bg = bg_intercept + bg_slope * x_local
+    y_subtracted = y_local - bg
+
+    # Initial guess for each peak (no background params needed for fitting)
+    p0 = []
+    bounds_lower = []
+    bounds_upper = []
+
+    for pos in peak_positions:
+        idx = np.argmin(np.abs(x_local - pos))
+        search_range = min(10, len(x_local)//4)
+        left_idx = max(0, idx - search_range)
+        right_idx = min(len(x_local), idx + search_range)
+        local_max_idx = left_idx + np.argmax(y_subtracted[left_idx:right_idx])
+
+        amp_guess = y_subtracted[local_max_idx]
+        cen_guess = x_local[local_max_idx]
+        sig_guess = 0.05
+        gam_guess = 0.05
+        eta_guess = 0.5
+
+        p0.extend([amp_guess, cen_guess, sig_guess, gam_guess, eta_guess])
+        bounds_lower.extend([0, x_local.min(), 0.001, 0.001, 0])
+        bounds_upper.extend([np.inf, x_local.max(), 1.0, 1.0, 1.0])
+
+    # Define fitting function for multiple peaks without background
+    def multi_peak_no_bg(x, *params):
+        y = np.zeros_like(x)
+        n = len(params) // 5
+        for i in range(n):
+            offset = i * 5
+            amp, cen, sig, gam, eta = params[offset:offset+5]
+            y += pseudo_voigt(x, amp, cen, sig, gam, eta)
+        return y
+
+    try:
+        popt, pcov = curve_fit(multi_peak_no_bg, x_local, y_subtracted,
+                               p0=p0, bounds=(bounds_lower, bounds_upper),
+                               maxfev=200000)
+        # Return in format: [bg0, bg1, amp1, cen1, sig1, gam1, eta1, ...]
+        result = [bg_intercept, bg_slope] + list(popt)
+        return result, True
+    except Exception as e:
+        print(f"   Multi-peak fit failed: {e}")
+        return None, False
+
 # ---------- Interactive Peak Selection ----------
 class PeakSelector:
     def __init__(self, x, y, filename, save_dir):
@@ -151,6 +237,11 @@ class PeakSelector:
         # Multi-peak selection
         self.multi_peak_positions = []  # Temporary storage for Ctrl+click positions
         self.multi_peak_markers = []    # Temporary markers for multi-peak selection
+        # Manual background selection
+        self.bg_mode = False  # Whether in background selection mode
+        self.bg_points = []   # Background points (x, y)
+        self.bg_markers = []  # Background markers
+        self.bg_line_plot = None  # Background line plot
 
     def run(self):
         """Run interactive peak selection with zoom/pan support"""
@@ -167,22 +258,30 @@ class PeakSelector:
         self.ax.legend(loc='upper right')
 
         # Add buttons
-        ax_finish = self.fig.add_axes([0.75, 0.02, 0.1, 0.04])
-        ax_clear = self.fig.add_axes([0.6, 0.02, 0.1, 0.04])
-        ax_undo = self.fig.add_axes([0.45, 0.02, 0.1, 0.04])
-        ax_multi = self.fig.add_axes([0.25, 0.02, 0.15, 0.04])
+        ax_finish = self.fig.add_axes([0.82, 0.02, 0.08, 0.04])
+        ax_clear = self.fig.add_axes([0.7, 0.02, 0.08, 0.04])
+        ax_undo = self.fig.add_axes([0.58, 0.02, 0.08, 0.04])
+        ax_multi = self.fig.add_axes([0.42, 0.02, 0.12, 0.04])
+        ax_bg = self.fig.add_axes([0.25, 0.02, 0.12, 0.04])
+        ax_clear_bg = self.fig.add_axes([0.1, 0.02, 0.1, 0.04])
 
-        self.btn_finish = Button(ax_finish, 'Save & Exit')
+        self.btn_finish = Button(ax_finish, 'Save')
         self.btn_finish.on_clicked(self.on_finish)
 
         self.btn_clear = Button(ax_clear, 'Clear All')
         self.btn_clear.on_clicked(self.on_clear)
 
-        self.btn_undo = Button(ax_undo, 'Undo Last')
+        self.btn_undo = Button(ax_undo, 'Undo')
         self.btn_undo.on_clicked(self.on_undo)
 
-        self.btn_multi = Button(ax_multi, 'Fit Multi-Peak')
+        self.btn_multi = Button(ax_multi, 'Fit Multi')
         self.btn_multi.on_clicked(self.on_fit_multi_peak)
+
+        self.btn_bg = Button(ax_bg, 'Select BG')
+        self.btn_bg.on_clicked(self.on_select_bg)
+
+        self.btn_clear_bg = Button(ax_clear_bg, 'Clear BG')
+        self.btn_clear_bg.on_clicked(self.on_clear_bg)
 
         # Connect mouse click event
         self.cid = self.fig.canvas.mpl_connect('button_press_event', self.on_click)
@@ -194,12 +293,15 @@ class PeakSelector:
         print("="*60)
         print("- SCROLL WHEEL: zoom in/out at cursor position")
         print("- Use toolbar to PAN (hand icon)")
-        print("- LEFT-CLICK: fit single peak immediately")
-        print("- CTRL+CLICK: select multiple peaks (shown as cyan markers)")
-        print("- Click 'Fit Multi-Peak' to fit selected peaks together")
-        print("- Click 'Undo Last' to remove the last fit")
-        print("- Click 'Clear All' to remove all fits")
-        print("- Click 'Save & Exit' when done")
+        print("")
+        print("Peak Fitting:")
+        print("- LEFT-CLICK: fit single peak (auto background)")
+        print("- CTRL+CLICK: select multiple peaks for multi-peak fit")
+        print("")
+        print("Manual Background:")
+        print("- Click 'Select BG' then click 2 points to define background")
+        print("- After BG is set, click peaks to fit with manual background")
+        print("- Click 'Clear BG' to return to auto background mode")
         print("="*60 + "\n")
 
         plt.show(block=True)
@@ -256,6 +358,33 @@ class PeakSelector:
         x_click = event.xdata
         y_click = event.ydata
 
+        # Background selection mode
+        if self.bg_mode:
+            self.bg_points.append((x_click, y_click))
+            marker, = self.ax.plot(x_click, y_click, 'ms', markersize=10, alpha=0.8)
+            self.bg_markers.append(marker)
+
+            if len(self.bg_points) == 2:
+                # Draw background line
+                x1, y1 = self.bg_points[0]
+                x2, y2 = self.bg_points[1]
+                x_bg = np.array([min(x1, x2), max(x1, x2)])
+                slope = (y2 - y1) / (x2 - x1) if x2 != x1 else 0
+                intercept = y1 - slope * x1
+                y_bg = intercept + slope * x_bg
+
+                if self.bg_line_plot:
+                    self.bg_line_plot.remove()
+                self.bg_line_plot, = self.ax.plot(x_bg, y_bg, 'm-', linewidth=2, alpha=0.7, label='Manual BG')
+                self.ax.legend(loc='upper right')
+
+                self.bg_mode = False
+                print(f"   Background set: ({x1:.3f}, {y1:.1f}) to ({x2:.3f}, {y2:.1f})")
+                print("   Now click on peaks to fit with this background")
+
+            self.fig.canvas.draw()
+            return
+
         # Check if Ctrl is pressed for multi-peak selection
         if event.key == 'control':
             # Add to multi-peak selection
@@ -284,8 +413,17 @@ class PeakSelector:
         x_local = self.x[left:right]
         y_local = self.y[left:right]
 
-        # Fit the peak
-        popt, success = fit_single_peak(x_local, y_local)
+        # Fit the peak with manual or auto background
+        if len(self.bg_points) == 2:
+            # Use manual background
+            x1, y1 = self.bg_points[0]
+            x2, y2 = self.bg_points[1]
+            slope = (y2 - y1) / (x2 - x1) if x2 != x1 else 0
+            intercept = y1 - slope * x1
+            popt, success = fit_single_peak_with_fixed_bg(x_local, y_local, intercept, slope)
+        else:
+            # Auto background
+            popt, success = fit_single_peak(x_local, y_local)
 
         if success:
             self.peak_count += 1
@@ -383,6 +521,35 @@ class PeakSelector:
         self.fig.canvas.draw()
         print("   All fits cleared.")
 
+    def on_select_bg(self, event):
+        """Enter background selection mode"""
+        # Clear previous background selection
+        for marker in self.bg_markers:
+            marker.remove()
+        self.bg_markers = []
+        self.bg_points = []
+
+        self.bg_mode = True
+        print("   Background selection mode: click 2 points to define background line")
+
+        self.fig.canvas.draw()
+
+    def on_clear_bg(self, event):
+        """Clear manual background and return to auto mode"""
+        for marker in self.bg_markers:
+            marker.remove()
+        self.bg_markers = []
+        self.bg_points = []
+
+        if self.bg_line_plot:
+            self.bg_line_plot.remove()
+            self.bg_line_plot = None
+
+        self.bg_mode = False
+        self.ax.legend(loc='upper right')
+        self.fig.canvas.draw()
+        print("   Manual background cleared. Using auto background mode.")
+
     def on_fit_multi_peak(self, event):
         """Fit multiple selected peaks together"""
         if len(self.multi_peak_positions) < 2:
@@ -411,8 +578,17 @@ class PeakSelector:
 
         print(f"   Fitting {n_peaks} peaks together...")
 
-        # Fit multiple peaks
-        popt, success = fit_multi_peak(x_local, y_local, positions)
+        # Fit multiple peaks with manual or auto background
+        if len(self.bg_points) == 2:
+            # Use manual background
+            x1, y1 = self.bg_points[0]
+            x2, y2 = self.bg_points[1]
+            bg_slope = (y2 - y1) / (x2 - x1) if x2 != x1 else 0
+            bg_intercept = y1 - bg_slope * x1
+            popt, success = fit_multi_peak_with_fixed_bg(x_local, y_local, positions, bg_intercept, bg_slope)
+        else:
+            # Auto background
+            popt, success = fit_multi_peak(x_local, y_local, positions)
 
         if success:
             bg0, bg1 = popt[0], popt[1]
