@@ -199,6 +199,21 @@ class PeakFittingGUI:
                                         state=tk.DISABLED, **btn_bg_style)
         self.btn_select_bg.pack(side=tk.LEFT, padx=10, pady=8)
 
+        # Auto background detection button
+        self.btn_auto_bg = tk.Button(bg_frame, text="Auto BG",
+                                     bg='#98FB98', fg='#006400',
+                                     command=self.auto_detect_bg,
+                                     state=tk.DISABLED, **btn_bg_style)
+        self.btn_auto_bg.pack(side=tk.LEFT, padx=5, pady=8)
+
+        # Smoothing window for auto BG
+        tk.Label(bg_frame, text="Smooth:", bg='#E6D5F5', fg='#4B0082',
+                font=('Arial', 9)).pack(side=tk.LEFT, padx=2)
+        self.smooth_var = tk.StringVar(value='5')
+        smooth_combo = ttk.Combobox(bg_frame, textvariable=self.smooth_var,
+                                    values=['3', '5', '7', '9', '11', '15', '21'], width=3)
+        smooth_combo.pack(side=tk.LEFT, padx=2)
+
         self.btn_fit_bg = tk.Button(bg_frame, text="Fit Background",
                                     bg='#87CEEB', fg='#00008B',
                                     command=self.fit_background,
@@ -352,6 +367,7 @@ class PeakFittingGUI:
             self.btn_fit.config(state=tk.NORMAL)
             self.btn_reset.config(state=tk.NORMAL)
             self.btn_select_bg.config(state=tk.NORMAL)
+            self.btn_auto_bg.config(state=tk.NORMAL)
             self.btn_clear_bg.config(state=tk.NORMAL)
 
             # Update status
@@ -430,6 +446,85 @@ class PeakFittingGUI:
         else:
             self.btn_select_bg.config(bg='#B0A0D0', fg='#2F0060', text="Select BG Points")
             self.status_label.config(text=f"{len(self.bg_points)} BG points selected")
+
+    def auto_detect_bg(self):
+        """Auto-detect background points using second derivative = 0 with smoothing"""
+        if self.x is None or self.y is None:
+            return
+
+        try:
+            # Get smoothing window size
+            smooth_window = int(self.smooth_var.get())
+
+            # Apply adjacent averaging (moving average smoothing)
+            y_smooth = np.convolve(self.y, np.ones(smooth_window)/smooth_window, mode='same')
+
+            # Calculate second derivative using finite differences
+            dx = np.gradient(self.x)
+            dy = np.gradient(y_smooth, self.x)
+            d2y = np.gradient(dy, self.x)
+
+            # Apply smoothing to second derivative as well
+            d2y_smooth = np.convolve(d2y, np.ones(smooth_window)/smooth_window, mode='same')
+
+            # Find points where second derivative is close to zero (flat regions)
+            # Use threshold based on data range
+            threshold = np.std(d2y_smooth) * 0.1
+
+            # Find zero crossings and near-zero regions
+            zero_crossings = []
+            for i in range(1, len(d2y_smooth) - 1):
+                # Check for sign change (zero crossing)
+                if d2y_smooth[i-1] * d2y_smooth[i+1] < 0:
+                    zero_crossings.append(i)
+                # Check for near-zero value
+                elif abs(d2y_smooth[i]) < threshold:
+                    zero_crossings.append(i)
+
+            # Remove duplicates and sort
+            zero_crossings = sorted(set(zero_crossings))
+
+            # Filter to keep only well-spaced points (avoid clustering)
+            min_spacing = len(self.x) // 20  # Minimum spacing between points
+            filtered_indices = []
+            last_idx = -min_spacing
+            for idx in zero_crossings:
+                if idx - last_idx >= min_spacing:
+                    filtered_indices.append(idx)
+                    last_idx = idx
+
+            # Clear existing background points
+            self.clear_background()
+
+            # Add detected points as background points
+            for idx in filtered_indices:
+                point_x = self.x[idx]
+                point_y = self.y[idx]
+
+                marker, = self.ax.plot(point_x, point_y, 's', color='#4169E1',
+                                      markersize=6, markeredgecolor='#FFD700',
+                                      markeredgewidth=1, zorder=10)
+                self.bg_points.append((point_x, point_y))
+                self.bg_markers.append(marker)
+
+                # Add to undo stack
+                self.undo_stack.append(('bg_point', len(self.bg_points) - 1))
+
+            self.canvas.draw()
+
+            if self.undo_stack:
+                self.btn_undo.config(state=tk.NORMAL)
+
+            # Enable fit background if enough points
+            if len(self.bg_points) >= 2:
+                self.btn_fit_bg.config(state=tk.NORMAL)
+
+            self.update_info(f"Auto-detected {len(self.bg_points)} background points (smooth={smooth_window})\n")
+            self.status_label.config(text=f"{len(self.bg_points)} BG points auto-detected")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to auto-detect background:\n{str(e)}")
+            self.update_info(f"Auto BG detection failed: {str(e)}\n")
 
     def undo_action(self):
         """Undo the last peak or background point selection"""
