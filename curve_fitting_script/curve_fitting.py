@@ -222,6 +222,15 @@ class PeakFittingGUI:
         # Connect scroll event for mouse wheel zoom
         self.canvas.mpl_connect('scroll_event', self.on_scroll)
 
+        # Connect mouse motion event for coordinate display
+        self.canvas.mpl_connect('motion_notify_event', self.on_mouse_move)
+
+        # Coordinate display label
+        self.coord_label = tk.Label(self.master, text="",
+                                    bg='#F0E6FA', fg='#4B0082',
+                                    font=('Courier', 9))
+        self.coord_label.pack(side=tk.BOTTOM, anchor='w', padx=10)
+
         # Info panel at bottom
         info_frame = tk.Frame(self.master, bg='#F0E6FA', height=80)
         info_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=5)
@@ -272,6 +281,13 @@ class PeakFittingGUI:
         self.ax.set_xlim(new_xlim)
         self.ax.set_ylim(new_ylim)
         self.canvas.draw()
+
+    def on_mouse_move(self, event):
+        """Display mouse coordinates in real-time"""
+        if event.inaxes == self.ax and event.xdata is not None and event.ydata is not None:
+            self.coord_label.config(text=f"2theta: {event.xdata:.4f}  Intensity: {event.ydata:.2f}")
+        else:
+            self.coord_label.config(text="")
 
     def load_file(self):
         """Load XRD data file"""
@@ -585,21 +601,27 @@ class PeakFittingGUI:
             bg0 = np.percentile(self.y, 10)
             bg1 = 0
 
-            # Initial parameters
+            # Initial parameters - allow negative bg0 for background-subtracted data
             p0 = [bg0, bg1]
-            bounds_lower = [0, -np.inf]
+            bounds_lower = [-np.inf, -np.inf]
             bounds_upper = [np.inf, np.inf]
 
+            # Estimate data range for better bounds
+            x_range = self.x.max() - self.x.min()
+            y_range = self.y.max() - self.y.min()
+
             for idx in self.selected_peaks:
-                amp_guess = self.y[idx] - bg0
+                amp_guess = max(self.y[idx] - bg0, y_range * 0.01)  # Ensure positive amplitude
                 cen_guess = self.x[idx]
-                sig_guess = 0.05
-                gam_guess = 0.05
+                # Estimate sigma based on data spacing
+                sig_guess = x_range * 0.01
+                gam_guess = x_range * 0.01
                 eta_guess = 0.5
 
                 p0.extend([amp_guess, cen_guess, sig_guess, gam_guess, eta_guess])
-                bounds_lower.extend([0, self.x.min(), 0.001, 0.001, 0])
-                bounds_upper.extend([np.inf, self.x.max(), 1.0, 1.0, 1.0])
+                # Wider bounds for sigma and gamma
+                bounds_lower.extend([0, self.x.min(), 1e-6, 1e-6, 0])
+                bounds_upper.extend([np.inf, self.x.max(), x_range, x_range, 1.0])
 
             # Perform fitting
             popt, pcov = curve_fit(multi_pseudo_voigt, self.x, self.y,
