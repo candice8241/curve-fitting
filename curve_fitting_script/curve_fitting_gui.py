@@ -169,6 +169,41 @@ class PeakFittingGUI:
                                     font=('Courier', 9))
         self.coord_label.pack(side=tk.RIGHT, padx=10, pady=10)
 
+        # Results display panel
+        results_frame = tk.Frame(self.master, bg='#F5E6FF', height=120)
+        results_frame.pack(side=tk.TOP, fill=tk.X, padx=5, pady=2)
+        results_frame.pack_propagate(False)
+
+        results_label = tk.Label(results_frame, text="Fitting Results:",
+                                bg='#F5E6FF', fg='#4B0082',
+                                font=('Arial', 10, 'bold'))
+        results_label.pack(side=tk.TOP, anchor='w', padx=10, pady=5)
+
+        # Create Treeview for results table
+        columns = ('Peak', '2theta', 'FWHM', 'Area', 'Amplitude', 'Sigma', 'Gamma', 'Eta')
+        self.results_tree = ttk.Treeview(results_frame, columns=columns, show='headings', height=4)
+
+        # Configure column headings and widths
+        col_widths = {'Peak': 50, '2theta': 100, 'FWHM': 100, 'Area': 100,
+                      'Amplitude': 100, 'Sigma': 80, 'Gamma': 80, 'Eta': 60}
+        for col in columns:
+            self.results_tree.heading(col, text=col)
+            self.results_tree.column(col, width=col_widths.get(col, 80), anchor='center')
+
+        # Add scrollbar
+        results_scrollbar = ttk.Scrollbar(results_frame, orient=tk.VERTICAL, command=self.results_tree.yview)
+        self.results_tree.configure(yscrollcommand=results_scrollbar.set)
+
+        self.results_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=5)
+        results_scrollbar.pack(side=tk.RIGHT, fill=tk.Y, pady=5)
+
+        # Style the treeview
+        style = ttk.Style()
+        style.configure('Treeview', background='#FAF0FF', foreground='#4B0082',
+                       font=('Courier', 9))
+        style.configure('Treeview.Heading', font=('Arial', 9, 'bold'),
+                       foreground='#4B0082')
+
         # Main plot area
         plot_frame = tk.Frame(self.master, bg='white')
         plot_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=5, pady=5)
@@ -672,22 +707,29 @@ class PeakFittingGUI:
                                         zorder=5, alpha=0.9)
                 self.fit_lines.append(line1)
 
-            # Plot individual peak components
-            x_full_smooth = np.linspace(self.x.min(), self.x.max(), 2000)
+            # Plot individual peak components - only near each peak center
             for i in range(len(self.selected_peaks)):
                 offset = i * 5
                 amp, cen, sig, gam, eta = popt[offset:offset+5]
-                y_component = pseudo_voigt(x_full_smooth, amp, cen, sig, gam, eta)
 
-                # Only plot where the component is significant (for clarity)
-                significant_mask = y_component > y_component.max() * 0.001
-                if np.any(significant_mask):
-                    line_comp, = self.ax.plot(x_full_smooth[significant_mask],
-                                             y_component[significant_mask], '--',
-                                             linewidth=0.8,
-                                             alpha=0.6, zorder=4,
-                                             label=f'Peak {i+1}')
-                    self.fit_lines.append(line_comp)
+                # Calculate FWHM to determine plot range
+                fwhm = calculate_fwhm(sig, gam, eta)
+                # Plot range: 3x FWHM on each side of center (covers ~99% of peak)
+                plot_range = fwhm * 3
+
+                # Create smooth x values only near this peak
+                x_peak_smooth = np.linspace(cen - plot_range, cen + plot_range, 300)
+                # Clip to data range
+                x_peak_smooth = x_peak_smooth[(x_peak_smooth >= self.x.min()) &
+                                               (x_peak_smooth <= self.x.max())]
+
+                y_component = pseudo_voigt(x_peak_smooth, amp, cen, sig, gam, eta)
+
+                line_comp, = self.ax.plot(x_peak_smooth, y_component, '--',
+                                         linewidth=0.8,
+                                         alpha=0.6, zorder=4,
+                                         label=f'Peak {i+1}')
+                self.fit_lines.append(line_comp)
 
             # Extract fitting results and add text annotations
             n_peaks = len(self.selected_peaks)
@@ -749,6 +791,29 @@ class PeakFittingGUI:
             self.fit_results = pd.DataFrame(results)
             self.fitted = True
 
+            # Update results table
+            # Clear existing items
+            for item in self.results_tree.get_children():
+                self.results_tree.delete(item)
+
+            # Insert new results
+            for i in range(n_peaks):
+                offset = i * 5
+                amp, cen, sig, gam, eta = popt[offset:offset+5]
+                fwhm = calculate_fwhm(sig, gam, eta)
+                area = calculate_area(amp, sig, gam, eta)
+
+                self.results_tree.insert('', 'end', values=(
+                    f'{i+1}',
+                    f'{cen:.4f}',
+                    f'{fwhm:.5f}',
+                    f'{area:.2f}',
+                    f'{amp:.2f}',
+                    f'{sig:.5f}',
+                    f'{gam:.5f}',
+                    f'{eta:.3f}'
+                ))
+
             self.ax.legend(fontsize=9, loc='best', framealpha=0.9, ncol=2)
             self.ax.set_title(f'{self.filename} - Fit Complete (Selected Peaks Only)',
                             fontsize=14, fontweight='bold', color='#32CD32')
@@ -778,6 +843,10 @@ class PeakFittingGUI:
 
         self.fitted = False
         self.fit_results = None
+
+        # Clear results table
+        for item in self.results_tree.get_children():
+            self.results_tree.delete(item)
 
         self.ax.set_title(f'{self.filename}\nClick on peaks to select | Use toolbar or scroll to zoom/pan',
                          fontsize=14, fontweight='bold', color='#9370DB')
@@ -816,6 +885,10 @@ class PeakFittingGUI:
         self.fit_lines = []
         self.fitted = False
         self.fit_results = None
+
+        # Clear results table
+        for item in self.results_tree.get_children():
+            self.results_tree.delete(item)
 
         # Clear peak-related items from undo stack
         self.undo_stack = [item for item in self.undo_stack if item[0] != 'peak']
