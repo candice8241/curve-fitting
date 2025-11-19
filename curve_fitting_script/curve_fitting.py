@@ -572,11 +572,40 @@ class PeakSelector:
         if self.bg_line_plot:
             self.bg_line_plot.remove()
 
-        # Fit smooth background - always use linear fit for zero curvature
-        # This ensures the background is always flat/smooth without oscillations
-        # Linear fit (least squares) through all selected points
-        coeffs = np.polyfit(x_bg, y_bg, 1)  # degree=1 for linear
-        self.bg_spline = np.poly1d(coeffs)
+        # Fit background with minimal curvature
+        # Try linear first, then quadratic only if it significantly improves fit
+        # Goal: good fit to points while keeping curvature near zero
+
+        # Linear fit
+        coeffs_1 = np.polyfit(x_bg, y_bg, 1)
+        poly_1 = np.poly1d(coeffs_1)
+        residuals_1 = np.sum((y_bg - poly_1(x_bg))**2)
+
+        # Only try quadratic if we have more than 2 points
+        if len(points) > 2:
+            # Quadratic fit
+            coeffs_2 = np.polyfit(x_bg, y_bg, 2)
+            poly_2 = np.poly1d(coeffs_2)
+            residuals_2 = np.sum((y_bg - poly_2(x_bg))**2)
+
+            # Calculate curvature (second derivative = 2*a for ax^2+bx+c)
+            curvature = abs(2 * coeffs_2[0])
+
+            # Use quadratic only if:
+            # 1. It reduces residuals by more than 50%
+            # 2. And curvature is very small (near zero)
+            # Otherwise prefer linear for zero curvature
+            improvement = (residuals_1 - residuals_2) / (residuals_1 + 1e-10)
+
+            if improvement > 0.5 and curvature < 0.1:
+                self.bg_spline = poly_2
+                print(f"   Using quadratic fit (improvement: {improvement*100:.1f}%, curvature: {curvature:.4f})")
+            else:
+                self.bg_spline = poly_1
+                print(f"   Using linear fit (curvature: 0)")
+        else:
+            self.bg_spline = poly_1
+            print(f"   Using linear fit (curvature: 0)")
 
         # Plot fitted background - only within the range of selected points
         x_smooth = np.linspace(x_bg.min(), x_bg.max(), 500)
