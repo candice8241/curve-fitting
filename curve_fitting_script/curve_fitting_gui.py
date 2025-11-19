@@ -636,7 +636,6 @@ class PeakFittingGUI:
 
             # First pass: estimate FWHM for each peak
             fwhm_estimates = []
-            is_shoulder = []  # Track if peak is likely a shoulder
 
             for idx in sorted_peaks:
                 peak_height = self.y[idx] - y_min
@@ -662,14 +661,9 @@ class PeakFittingGUI:
 
                 fwhm_estimate = abs(self.x[right_idx] - self.x[left_idx])
 
-                # Check if this is likely a shoulder peak
-                # (can't find both half-max points or FWHM is very small)
-                if not (found_left and found_right) or fwhm_estimate < dx * 3:
-                    is_shoulder.append(True)
-                    # Use a default FWHM based on typical peak width
-                    fwhm_estimate = dx * 10  # Default width for shoulders
-                else:
-                    is_shoulder.append(False)
+                # If FWHM estimate is too small, use default
+                if fwhm_estimate < dx * 3:
+                    fwhm_estimate = dx * 10  # Default width
 
                 if fwhm_estimate < dx * 2:
                     fwhm_estimate = dx * 5
@@ -695,23 +689,6 @@ class PeakFittingGUI:
                     current_group = [i]
 
             peak_groups.append(current_group)
-
-            # For grouped peaks, refine shoulder detection and FWHM estimates
-            for group in peak_groups:
-                if len(group) > 1:
-                    # Find the main peak (highest intensity) in this group
-                    group_peaks = [sorted_peaks[i] for i in group]
-                    main_peak_local_idx = np.argmax([self.y[idx] for idx in group_peaks])
-                    main_peak_fwhm = fwhm_estimates[group[main_peak_local_idx]]
-
-                    # Mark other peaks as shoulders
-                    for local_i, global_i in enumerate(group):
-                        if local_i != main_peak_local_idx:
-                            is_shoulder[global_i] = True
-                            # Keep shoulder's own FWHM estimate if reasonable,
-                            # otherwise use main peak's FWHM as reference
-                            if fwhm_estimates[global_i] < dx * 3:
-                                fwhm_estimates[global_i] = main_peak_fwhm * 1.0  # Same as main peak
 
             # Report overlapping peaks
             for group in peak_groups:
@@ -786,62 +763,22 @@ class PeakFittingGUI:
 
                 # Estimate amplitude based on local height
                 local_height = self.y[idx] - y_min
+                amp_guess = local_height
+                if amp_guess <= 0:
+                    amp_guess = y_range * 0.1
 
-                # For shoulder/emerging peaks, use different strategy
-                if is_shoulder[i]:
-                    # Find the main peak in the same group
-                    main_peak_height = y_range * 0.3  # Default
-                    main_peak_amp = y_range * 0.3  # Default amplitude
-                    for group in peak_groups:
-                        if i in group:
-                            group_peaks = [sorted_peaks[g] for g in group]
-                            heights = [self.y[p] - y_min for p in group_peaks]
-                            main_peak_height = max(heights)
-                            main_peak_amp = main_peak_height
-                            break
+                # Amplitude bounds - same for all peaks
+                amp_lower = y_range * 0.001
+                amp_upper = y_range * 2
 
-                    # For emerging peak: use a fraction of main peak amplitude
-                    # This is more reliable than local height which is dominated by main peak
-                    # Start with 30% of main peak as initial guess for shoulder
-                    amp_guess = main_peak_amp * 0.3
+                # Center tolerance - keep close to clicked position
+                center_tolerance = fwhm_estimate * 0.2
 
-                    # But also check if local height suggests something different
-                    # If local height is significant, use it as a floor
-                    local_based_guess = local_height * 0.4
-                    if local_based_guess > amp_guess:
-                        amp_guess = local_based_guess
-
-                    # Minimum amplitude should be reasonable
-                    min_amp = main_peak_height * 0.02  # At least 2% of main peak
-                    if amp_guess < min_amp:
-                        amp_guess = min_amp
-
-                    # Wide amplitude bounds for shoulder - key for emerging peaks
-                    amp_lower = y_range * 0.0001  # Very very small lower bound
-                    amp_upper = main_peak_height * 1.5  # Can be up to 1.5x main peak
-                    # User clicked position is the peak center - only allow small movement
-                    center_tolerance = fwhm_estimate * 0.15  # Very tight: 15% of FWHM
-                else:
-                    amp_guess = local_height
-                    if amp_guess <= 0:
-                        amp_guess = y_range * 0.1
-
-                    amp_lower = amp_guess * 0.01
-                    amp_upper = amp_guess * 100
-                    # For main peaks, also keep center close to clicked position
-                    center_tolerance = fwhm_estimate * 0.2  # 20% of FWHM
-
-                # Set sigma/gamma bounds - wider for shoulders to allow more shape flexibility
-                if is_shoulder[i]:
-                    sig_lower = dx * 0.05  # Allow narrower peaks for shoulders
-                    gam_lower = dx * 0.05
-                    sig_upper = fwhm_estimate * 8  # Allow wider range for shoulders
-                    gam_upper = fwhm_estimate * 8
-                else:
-                    sig_lower = dx * 0.1
-                    gam_lower = dx * 0.1
-                    sig_upper = fwhm_estimate * 5
-                    gam_upper = fwhm_estimate * 5
+                # Sigma/gamma bounds - same for all peaks
+                sig_lower = dx * 0.1
+                gam_lower = dx * 0.1
+                sig_upper = fwhm_estimate * 5
+                gam_upper = fwhm_estimate * 5
 
                 if use_voigt:
                     p0.extend([amp_guess, cen_guess, sig_guess, gam_guess])
@@ -990,8 +927,7 @@ class PeakFittingGUI:
                         'Eta': eta
                     })
 
-                shoulder_note = " (shoulder)" if is_shoulder[i] else ""
-                info_msg += f"Peak {original_idx+1}{shoulder_note}: 2theta={cen:.4f}, FWHM={fwhm:.5f}, Area={area:.1f}\n"
+                info_msg += f"Peak {original_idx+1}: 2theta={cen:.4f}, FWHM={fwhm:.5f}, Area={area:.1f}\n"
 
             # Sort results by original peak number
             results.sort(key=lambda r: r['Peak'])
