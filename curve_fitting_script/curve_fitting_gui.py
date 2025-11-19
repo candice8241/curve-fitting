@@ -799,10 +799,11 @@ class PeakFittingGUI:
                     if amp_guess < main_peak_height * 0.05:
                         amp_guess = main_peak_height * 0.1  # At least 10% of main peak
 
-                    # Very relaxed bounds for shoulder
+                    # Relaxed amplitude bounds but tight center position
                     amp_lower = y_range * 0.001  # Very small lower bound
                     amp_upper = main_peak_height * 2  # Can be up to 2x main peak
-                    center_tolerance = fwhm_estimate * 1.5  # More freedom to move
+                    # User clicked position is the peak center - only allow small movement
+                    center_tolerance = fwhm_estimate * 0.15  # Very tight: 15% of FWHM
                 else:
                     amp_guess = self.y[idx] - y_min
                     if amp_guess <= 0:
@@ -810,7 +811,8 @@ class PeakFittingGUI:
 
                     amp_lower = amp_guess * 0.01
                     amp_upper = amp_guess * 100
-                    center_tolerance = fwhm_estimate * 0.5
+                    # For main peaks, also keep center close to clicked position
+                    center_tolerance = fwhm_estimate * 0.2  # 20% of FWHM
 
                 if use_voigt:
                     p0.extend([amp_guess, cen_guess, sig_guess, gam_guess])
