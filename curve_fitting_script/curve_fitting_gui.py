@@ -612,7 +612,7 @@ class PeakFittingGUI:
         self.update_info("Background selection cleared\n")
 
     def fit_peaks(self):
-        """Fit only selected peaks with full tail coverage"""
+        """Fit only selected peaks with full tail coverage, supports peak splitting"""
         if len(self.selected_peaks) == 0:
             messagebox.showwarning("No Peaks", "Please select at least one peak first!")
             return
@@ -626,50 +626,129 @@ class PeakFittingGUI:
             # Average data spacing
             dx = np.mean(np.diff(self.x))
             y_min = self.y.min()
+            y_max = self.y.max()
+            y_range = y_max - y_min
 
-            # First pass: estimate FWHM for each peak to determine fitting windows
+            # Sort peaks by position for better grouping detection
+            sorted_indices = sorted(range(len(self.selected_peaks)),
+                                   key=lambda i: self.x[self.selected_peaks[i]])
+            sorted_peaks = [self.selected_peaks[i] for i in sorted_indices]
+
+            # First pass: estimate FWHM for each peak
             fwhm_estimates = []
-            for idx in self.selected_peaks:
+            is_shoulder = []  # Track if peak is likely a shoulder
+
+            for idx in sorted_peaks:
+                peak_height = self.y[idx] - y_min
                 half_max = (self.y[idx] + y_min) / 2
 
                 # Find left half maximum point
                 left_idx = idx
+                found_left = False
                 for j in range(idx, max(0, idx - 100), -1):
                     if self.y[j] <= half_max:
                         left_idx = j
+                        found_left = True
                         break
 
                 # Find right half maximum point
                 right_idx = idx
+                found_right = False
                 for j in range(idx, min(len(self.x), idx + 100)):
                     if self.y[j] <= half_max:
                         right_idx = j
+                        found_right = True
                         break
 
                 fwhm_estimate = abs(self.x[right_idx] - self.x[left_idx])
+
+                # Check if this is likely a shoulder peak
+                # (can't find both half-max points or FWHM is very small)
+                if not (found_left and found_right) or fwhm_estimate < dx * 3:
+                    is_shoulder.append(True)
+                    # Use a default FWHM based on typical peak width
+                    fwhm_estimate = dx * 10  # Default width for shoulders
+                else:
+                    is_shoulder.append(False)
+
                 if fwhm_estimate < dx * 2:
                     fwhm_estimate = dx * 5
                 fwhm_estimates.append(fwhm_estimate)
 
-            # Create mask for fitting regions - use 2x FWHM window
-            fit_mask = np.zeros(len(self.x), dtype=bool)
-            peak_windows = []
+            # Detect overlapping peaks (peaks that should be fit together)
+            # Group peaks that are within 3x FWHM of each other
+            peak_groups = []
+            current_group = [0]
 
-            for i, idx in enumerate(self.selected_peaks):
-                # Window based on 2x FWHM (in x units, not points)
+            for i in range(1, len(sorted_peaks)):
+                prev_idx = sorted_peaks[i-1]
+                curr_idx = sorted_peaks[i]
+                distance = abs(self.x[curr_idx] - self.x[prev_idx])
+                avg_fwhm = (fwhm_estimates[i-1] + fwhm_estimates[i]) / 2
+
+                if distance < avg_fwhm * 3:
+                    # Peaks are close, add to current group
+                    current_group.append(i)
+                else:
+                    # Start new group
+                    peak_groups.append(current_group)
+                    current_group = [i]
+
+            peak_groups.append(current_group)
+
+            # Report overlapping peaks
+            for group in peak_groups:
+                if len(group) > 1:
+                    peak_nums = [sorted_indices.index(g) + 1 for g in group]
+                    # Map back to original peak numbers
+                    original_nums = [sorted_indices[g] + 1 for g in group]
+                    self.update_info(f"Peaks {original_nums} will be fit together (overlapping)\n")
+
+            # Create combined fitting window based on groups
+            fit_mask = np.zeros(len(self.x), dtype=bool)
+            group_windows = []  # Store window for each group
+
+            for group in peak_groups:
+                # Find the extent of this group
+                group_peaks = [sorted_peaks[i] for i in group]
+                group_fwhms = [fwhm_estimates[i] for i in group]
+
+                # Window extends from leftmost peak - 2*FWHM to rightmost peak + 2*FWHM
+                left_center = self.x[min(group_peaks)]
+                right_center = self.x[max(group_peaks)]
+                left_fwhm = group_fwhms[group.index(group_peaks.index(min(group_peaks)))] if len(group) > 0 else group_fwhms[0]
+                right_fwhm = group_fwhms[-1]
+
+                window_left = left_center - left_fwhm * 2
+                window_right = right_center + right_fwhm * 2
+
+                # Find indices
+                left_mask = self.x >= window_left
+                right_mask = self.x <= window_right
+                window_mask = left_mask & right_mask
+
+                if np.any(window_mask):
+                    left = np.argmax(window_mask)
+                    right = len(self.x) - np.argmax(window_mask[::-1])
+                    fit_mask[left:right] = True
+                    group_windows.append((left, right))
+
+            # Also create individual peak windows for plotting
+            peak_windows = []
+            for i, idx in enumerate(sorted_peaks):
                 window_half = fwhm_estimates[i] * 2
                 x_center = self.x[idx]
 
-                # Find indices for this window
                 left_mask = self.x >= (x_center - window_half)
                 right_mask = self.x <= (x_center + window_half)
                 window_mask = left_mask & right_mask
 
-                left = np.argmax(window_mask)
-                right = len(self.x) - np.argmax(window_mask[::-1])
-
-                fit_mask[left:right] = True
-                peak_windows.append((left, right))
+                if np.any(window_mask):
+                    left = np.argmax(window_mask)
+                    right = len(self.x) - np.argmax(window_mask[::-1])
+                    peak_windows.append((left, right))
+                else:
+                    peak_windows.append((max(0, idx - 50), min(len(self.x), idx + 50)))
 
             # Extract data only within fitting regions
             x_fit = self.x[fit_mask]
@@ -683,27 +762,36 @@ class PeakFittingGUI:
             use_voigt = (fit_method == "voigt")
             n_params_per_peak = 4 if use_voigt else 5
 
-            for i, idx in enumerate(self.selected_peaks):
+            for i, idx in enumerate(sorted_peaks):
                 cen_guess = self.x[idx]
                 amp_guess = self.y[idx] - y_min
+
+                # For shoulder peaks, use smaller amplitude guess
+                if is_shoulder[i]:
+                    amp_guess = amp_guess * 0.5
+
                 if amp_guess <= 0:
-                    amp_guess = (self.y.max() - y_min) * 0.1
+                    amp_guess = y_range * 0.1
 
                 fwhm_estimate = fwhm_estimates[i]
                 sig_guess = fwhm_estimate / 2.355
                 gam_guess = fwhm_estimate / 2
 
-                center_tolerance = fwhm_estimate * 0.5
+                # Allow more center movement for shoulder peaks
+                if is_shoulder[i]:
+                    center_tolerance = fwhm_estimate * 1.0
+                else:
+                    center_tolerance = fwhm_estimate * 0.5
 
                 if use_voigt:
                     p0.extend([amp_guess, cen_guess, sig_guess, gam_guess])
-                    bounds_lower.extend([amp_guess * 0.01, cen_guess - center_tolerance, dx * 0.1, dx * 0.1])
+                    bounds_lower.extend([amp_guess * 0.001, cen_guess - center_tolerance, dx * 0.1, dx * 0.1])
                     bounds_upper.extend([amp_guess * 100, cen_guess + center_tolerance,
                                        fwhm_estimate * 5, fwhm_estimate * 5])
                 else:
                     eta_guess = 0.5
                     p0.extend([amp_guess, cen_guess, sig_guess, gam_guess, eta_guess])
-                    bounds_lower.extend([amp_guess * 0.01, cen_guess - center_tolerance, dx * 0.1, dx * 0.1, 0])
+                    bounds_lower.extend([amp_guess * 0.001, cen_guess - center_tolerance, dx * 0.1, dx * 0.1, 0])
                     bounds_upper.extend([amp_guess * 100, cen_guess + center_tolerance,
                                        fwhm_estimate * 5, fwhm_estimate * 5, 1.0])
 
@@ -732,13 +820,19 @@ class PeakFittingGUI:
                                   p0=p0, bounds=(bounds_lower, bounds_upper),
                                   maxfev=50000)
 
-            # Plot fit result - use red color for better contrast
-            for i, (left, right) in enumerate(peak_windows):
+            # Plot fit result for each group window
+            plotted_regions = set()
+            for left, right in group_windows:
+                region_key = (left, right)
+                if region_key in plotted_regions:
+                    continue
+                plotted_regions.add(region_key)
+
                 x_region = self.x[left:right]
                 x_smooth = np.linspace(x_region.min(), x_region.max(), 500)
                 y_fit_smooth = multi_peak_func(x_smooth, *popt)
 
-                if i == 0:
+                if len(plotted_regions) == 1:
                     line1, = self.ax.plot(x_smooth, y_fit_smooth, color='#FF0000', linewidth=1.5,
                                         label='Fit', zorder=5, alpha=0.9)
                 else:
@@ -747,12 +841,12 @@ class PeakFittingGUI:
                 self.fit_lines.append(line1)
 
             # Plot individual peak components
-            for i in range(len(self.selected_peaks)):
+            for i in range(len(sorted_peaks)):
                 offset = i * n_params_per_peak
 
                 if use_voigt:
                     amp, cen, sig, gam = popt[offset:offset+4]
-                    fwhm = 2.355 * sig  # Approximate FWHM for Voigt
+                    fwhm = 2.355 * sig
                     plot_range = fwhm * 2
                     x_peak_smooth = np.linspace(cen - plot_range, cen + plot_range, 300)
                     x_peak_smooth = x_peak_smooth[(x_peak_smooth >= self.x.min()) &
@@ -767,19 +861,22 @@ class PeakFittingGUI:
                                                    (x_peak_smooth <= self.x.max())]
                     y_component = pseudo_voigt(x_peak_smooth, amp, cen, sig, gam, eta)
 
+                # Map back to original peak number
+                original_idx = sorted_indices[i]
                 line_comp, = self.ax.plot(x_peak_smooth, y_component, '--',
                                          linewidth=0.8, alpha=0.6, zorder=4,
-                                         label=f'Peak {i+1}')
+                                         label=f'Peak {original_idx+1}')
                 self.fit_lines.append(line_comp)
 
-            # Extract fitting results (no annotation text boxes on plot)
-            n_peaks = len(self.selected_peaks)
+            # Extract fitting results
+            n_peaks = len(sorted_peaks)
             results = []
 
             info_msg = f"Fitting Results ({fit_method}):\n" + "="*50 + "\n"
 
             for i in range(n_peaks):
                 offset = i * n_params_per_peak
+                original_idx = sorted_indices[i]
 
                 if use_voigt:
                     amp, cen, sig, gam = popt[offset:offset+4]
@@ -788,7 +885,7 @@ class PeakFittingGUI:
                     eta = "N/A"
 
                     results.append({
-                        'Peak': i + 1,
+                        'Peak': original_idx + 1,
                         'Center_2theta': cen,
                         'FWHM': fwhm,
                         'Area': area,
@@ -803,7 +900,7 @@ class PeakFittingGUI:
                     area = calculate_area(amp, sig, gam, eta)
 
                     results.append({
-                        'Peak': i + 1,
+                        'Peak': original_idx + 1,
                         'Center_2theta': cen,
                         'FWHM': fwhm,
                         'Area': area,
@@ -813,7 +910,11 @@ class PeakFittingGUI:
                         'Eta': eta
                     })
 
-                info_msg += f"Peak {i+1}: 2theta={cen:.4f}, FWHM={fwhm:.5f}, Area={area:.1f}\n"
+                shoulder_note = " (shoulder)" if is_shoulder[i] else ""
+                info_msg += f"Peak {original_idx+1}{shoulder_note}: 2theta={cen:.4f}, FWHM={fwhm:.5f}, Area={area:.1f}\n"
+
+            # Sort results by original peak number
+            results.sort(key=lambda r: r['Peak'])
 
             self.fit_results = pd.DataFrame(results)
             self.fitted = True
@@ -822,8 +923,7 @@ class PeakFittingGUI:
             for item in self.results_tree.get_children():
                 self.results_tree.delete(item)
 
-            for i in range(n_peaks):
-                r = results[i]
+            for r in results:
                 eta_str = f"{r['Eta']:.3f}" if isinstance(r['Eta'], float) else r['Eta']
                 self.results_tree.insert('', 'end', values=(
                     f"{r['Peak']}",
