@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.widgets import Button
 from scipy.optimize import curve_fit
+from scipy.special import wofz
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import os
@@ -26,6 +27,11 @@ def pseudo_voigt(x, amplitude, center, sigma, gamma, eta):
     gaussian = amplitude * np.exp(-(x - center)**2 / (2 * sigma**2)) / (sigma * np.sqrt(2 * np.pi))
     lorentzian = amplitude * gamma**2 / ((x - center)**2 + gamma**2) / (np.pi * gamma)
     return eta * lorentzian + (1 - eta) * gaussian
+
+def voigt(x, amplitude, center, sigma, gamma):
+    """Voigt profile using Faddeeva function"""
+    z = ((x - center) + 1j * gamma) / (sigma * np.sqrt(2))
+    return amplitude * np.real(wofz(z)) / (sigma * np.sqrt(2 * np.pi))
 
 def calculate_fwhm(sigma, gamma, eta):
     """Calculate FWHM from Pseudo-Voigt parameters"""
@@ -69,8 +75,8 @@ class PeakFittingGUI:
         # Undo stack for tracking actions
         self.undo_stack = []
 
-        # Fitting window width (in data points) - controls how much of the tail to include
-        self.fit_window_points = 100  # Adjust this for more/less tail coverage
+        # Fitting method: "pseudo_voigt" or "voigt"
+        self.fit_method = tk.StringVar(value="pseudo_voigt")
 
         # Create GUI components
         self.create_widgets()
@@ -162,6 +168,16 @@ class PeakFittingGUI:
                                       command=self.clear_background,
                                       state=tk.DISABLED, **btn_bg_style)
         self.btn_clear_bg.pack(side=tk.LEFT, padx=5, pady=8)
+
+        # Fit method selector
+        tk.Label(bg_frame, text="Fit Method:",
+                bg='#E6D5F5', fg='#4B0082',
+                font=('Arial', 9, 'bold')).pack(side=tk.LEFT, padx=(20, 5), pady=10)
+
+        fit_method_combo = ttk.Combobox(bg_frame, textvariable=self.fit_method,
+                                        values=["pseudo_voigt", "voigt"],
+                                        state="readonly", width=12)
+        fit_method_combo.pack(side=tk.LEFT, padx=5, pady=8)
 
         # Coordinate display label in bg_frame
         self.coord_label = tk.Label(bg_frame, text="",
@@ -397,13 +413,13 @@ class PeakFittingGUI:
         elif not self.fitted:
             # Select peaks
             marker, = self.ax.plot(point_x, point_y, '*', color='#FF1493',
-                                  markersize=20, markeredgecolor='#FFD700',
-                                  markeredgewidth=2, zorder=10)
-            text = self.ax.text(point_x, point_y * 1.05, f'P{len(self.selected_peaks)+1}',
-                               ha='center', fontsize=11, color='#FF1493',
+                                  markersize=15, markeredgecolor='#FFD700',
+                                  markeredgewidth=1.5, zorder=10)
+            text = self.ax.text(point_x, point_y * 1.03, f'P{len(self.selected_peaks)+1}',
+                               ha='center', fontsize=8, color='#FF1493',
                                fontweight='bold', zorder=11,
-                               bbox=dict(boxstyle='round,pad=0.3', facecolor='#FFE4E1',
-                                       edgecolor='#FF69B4', linewidth=2))
+                               bbox=dict(boxstyle='round,pad=0.2', facecolor='#FFE4E1',
+                                       edgecolor='#FF69B4', linewidth=1))
 
             self.selected_peaks.append(idx)
             self.peak_markers.append(marker)
@@ -527,13 +543,13 @@ class PeakFittingGUI:
             # Re-add peak markers if any
             for i, idx in enumerate(self.selected_peaks):
                 marker, = self.ax.plot(self.x[idx], self.y[idx], '*', color='#FF1493',
-                                      markersize=20, markeredgecolor='#FFD700',
-                                      markeredgewidth=2, zorder=10)
-                text = self.ax.text(self.x[idx], self.y[idx] * 1.05, f'P{i+1}',
-                                   ha='center', fontsize=11, color='#FF1493',
+                                      markersize=15, markeredgecolor='#FFD700',
+                                      markeredgewidth=1.5, zorder=10)
+                text = self.ax.text(self.x[idx], self.y[idx] * 1.03, f'P{i+1}',
+                                   ha='center', fontsize=8, color='#FF1493',
                                    fontweight='bold', zorder=11,
-                                   bbox=dict(boxstyle='round,pad=0.3', facecolor='#FFE4E1',
-                                           edgecolor='#FF69B4', linewidth=2))
+                                   bbox=dict(boxstyle='round,pad=0.2', facecolor='#FFE4E1',
+                                           edgecolor='#FF69B4', linewidth=1))
                 self.peak_markers[i] = marker
                 self.peak_texts[i] = text
 
@@ -601,7 +617,8 @@ class PeakFittingGUI:
             messagebox.showwarning("No Peaks", "Please select at least one peak first!")
             return
 
-        self.update_info(f"Fitting {len(self.selected_peaks)} peaks (selected regions only)...\n")
+        fit_method = self.fit_method.get()
+        self.update_info(f"Fitting {len(self.selected_peaks)} peaks using {fit_method}...\n")
         self.status_label.config(text="Fitting in progress...")
         self.master.update()  # Update GUI to show status
 
@@ -610,37 +627,9 @@ class PeakFittingGUI:
             dx = np.mean(np.diff(self.x))
             y_min = self.y.min()
 
-            # Create mask for fitting regions - only fit around selected peaks
-            fit_mask = np.zeros(len(self.x), dtype=bool)
-
-            # Define fitting windows for each peak
-            peak_windows = []
+            # First pass: estimate FWHM for each peak to determine fitting windows
+            fwhm_estimates = []
             for idx in self.selected_peaks:
-                # Use a wide window to capture full peak tails
-                left = max(0, idx - self.fit_window_points)
-                right = min(len(self.x), idx + self.fit_window_points)
-                fit_mask[left:right] = True
-                peak_windows.append((left, right))
-
-            # Extract data only within fitting regions
-            x_fit = self.x[fit_mask]
-            y_fit = self.y[fit_mask]
-
-            # Initial parameters - use exact clicked positions as centers
-            p0 = []
-            bounds_lower = []
-            bounds_upper = []
-
-            for i, idx in enumerate(self.selected_peaks):
-                # Use clicked position as initial center
-                cen_guess = self.x[idx]
-
-                # Better amplitude estimation - use actual peak height above baseline
-                amp_guess = self.y[idx] - y_min
-                if amp_guess <= 0:
-                    amp_guess = (self.y.max() - y_min) * 0.1
-
-                # Improved width estimation using actual FWHM calculation
                 half_max = (self.y[idx] + y_min) / 2
 
                 # Find left half maximum point
@@ -657,134 +646,172 @@ class PeakFittingGUI:
                         right_idx = j
                         break
 
-                # Calculate FWHM and convert to sigma
                 fwhm_estimate = abs(self.x[right_idx] - self.x[left_idx])
                 if fwhm_estimate < dx * 2:
-                    fwhm_estimate = dx * 5  # Minimum reasonable width
+                    fwhm_estimate = dx * 5
+                fwhm_estimates.append(fwhm_estimate)
 
-                sig_guess = fwhm_estimate / 2.355  # Gaussian sigma from FWHM
-                gam_guess = fwhm_estimate / 2      # Lorentzian gamma from FWHM
-                eta_guess = 0.5
+            # Create mask for fitting regions - use 2x FWHM window
+            fit_mask = np.zeros(len(self.x), dtype=bool)
+            peak_windows = []
 
-                p0.extend([amp_guess, cen_guess, sig_guess, gam_guess, eta_guess])
+            for i, idx in enumerate(self.selected_peaks):
+                # Window based on 2x FWHM (in x units, not points)
+                window_half = fwhm_estimates[i] * 2
+                x_center = self.x[idx]
 
-                # Bounds: center constrained close to clicked position
-                center_tolerance = fwhm_estimate * 0.5  # Allow small movement from clicked position
-                bounds_lower.extend([amp_guess * 0.01, cen_guess - center_tolerance, dx * 0.1, dx * 0.1, 0])
-                bounds_upper.extend([amp_guess * 100, cen_guess + center_tolerance,
-                                   fwhm_estimate * 5, fwhm_estimate * 5, 1.0])
+                # Find indices for this window
+                left_mask = self.x >= (x_center - window_half)
+                right_mask = self.x <= (x_center + window_half)
+                window_mask = left_mask & right_mask
 
-            # Define fitting function for peaks only (no background)
-            def multi_peak_only(x, *params):
-                n_peaks = len(params) // 5
-                y = np.zeros_like(x)
-                for i in range(n_peaks):
-                    offset = i * 5
-                    amp, cen, sig, gam, eta = params[offset:offset+5]
-                    y += pseudo_voigt(x, amp, cen, sig, gam, eta)
-                return y
+                left = np.argmax(window_mask)
+                right = len(self.x) - np.argmax(window_mask[::-1])
 
-            # Perform fitting only on selected regions
-            popt, pcov = curve_fit(multi_peak_only, x_fit, y_fit,
+                fit_mask[left:right] = True
+                peak_windows.append((left, right))
+
+            # Extract data only within fitting regions
+            x_fit = self.x[fit_mask]
+            y_fit = self.y[fit_mask]
+
+            # Initial parameters
+            p0 = []
+            bounds_lower = []
+            bounds_upper = []
+
+            use_voigt = (fit_method == "voigt")
+            n_params_per_peak = 4 if use_voigt else 5
+
+            for i, idx in enumerate(self.selected_peaks):
+                cen_guess = self.x[idx]
+                amp_guess = self.y[idx] - y_min
+                if amp_guess <= 0:
+                    amp_guess = (self.y.max() - y_min) * 0.1
+
+                fwhm_estimate = fwhm_estimates[i]
+                sig_guess = fwhm_estimate / 2.355
+                gam_guess = fwhm_estimate / 2
+
+                center_tolerance = fwhm_estimate * 0.5
+
+                if use_voigt:
+                    p0.extend([amp_guess, cen_guess, sig_guess, gam_guess])
+                    bounds_lower.extend([amp_guess * 0.01, cen_guess - center_tolerance, dx * 0.1, dx * 0.1])
+                    bounds_upper.extend([amp_guess * 100, cen_guess + center_tolerance,
+                                       fwhm_estimate * 5, fwhm_estimate * 5])
+                else:
+                    eta_guess = 0.5
+                    p0.extend([amp_guess, cen_guess, sig_guess, gam_guess, eta_guess])
+                    bounds_lower.extend([amp_guess * 0.01, cen_guess - center_tolerance, dx * 0.1, dx * 0.1, 0])
+                    bounds_upper.extend([amp_guess * 100, cen_guess + center_tolerance,
+                                       fwhm_estimate * 5, fwhm_estimate * 5, 1.0])
+
+            # Define fitting function
+            if use_voigt:
+                def multi_peak_func(x, *params):
+                    n_peaks = len(params) // 4
+                    y = np.zeros_like(x)
+                    for i in range(n_peaks):
+                        offset = i * 4
+                        amp, cen, sig, gam = params[offset:offset+4]
+                        y += voigt(x, amp, cen, sig, gam)
+                    return y
+            else:
+                def multi_peak_func(x, *params):
+                    n_peaks = len(params) // 5
+                    y = np.zeros_like(x)
+                    for i in range(n_peaks):
+                        offset = i * 5
+                        amp, cen, sig, gam, eta = params[offset:offset+5]
+                        y += pseudo_voigt(x, amp, cen, sig, gam, eta)
+                    return y
+
+            # Perform fitting
+            popt, pcov = curve_fit(multi_peak_func, x_fit, y_fit,
                                   p0=p0, bounds=(bounds_lower, bounds_upper),
                                   maxfev=50000)
 
-            # Plot fit result - only in fitted regions with smooth curves
+            # Plot fit result - use red color for better contrast
             for i, (left, right) in enumerate(peak_windows):
-                # Create smooth x values for this peak region
                 x_region = self.x[left:right]
                 x_smooth = np.linspace(x_region.min(), x_region.max(), 500)
+                y_fit_smooth = multi_peak_func(x_smooth, *popt)
 
-                # Calculate total fit in this region
-                y_fit_smooth = multi_peak_only(x_smooth, *popt)
-
-                # Plot total fit for this region
                 if i == 0:
-                    line1, = self.ax.plot(x_smooth, y_fit_smooth, color='#BA55D3', linewidth=1.2,
+                    line1, = self.ax.plot(x_smooth, y_fit_smooth, color='#FF0000', linewidth=1.5,
                                         label='Fit', zorder=5, alpha=0.9)
                 else:
-                    line1, = self.ax.plot(x_smooth, y_fit_smooth, color='#BA55D3', linewidth=1.2,
+                    line1, = self.ax.plot(x_smooth, y_fit_smooth, color='#FF0000', linewidth=1.5,
                                         zorder=5, alpha=0.9)
                 self.fit_lines.append(line1)
 
-            # Plot individual peak components - only near each peak center
+            # Plot individual peak components
             for i in range(len(self.selected_peaks)):
-                offset = i * 5
-                amp, cen, sig, gam, eta = popt[offset:offset+5]
+                offset = i * n_params_per_peak
 
-                # Calculate FWHM to determine plot range
-                fwhm = calculate_fwhm(sig, gam, eta)
-                # Plot range: 3x FWHM on each side of center (covers ~99% of peak)
-                plot_range = fwhm * 3
-
-                # Create smooth x values only near this peak
-                x_peak_smooth = np.linspace(cen - plot_range, cen + plot_range, 300)
-                # Clip to data range
-                x_peak_smooth = x_peak_smooth[(x_peak_smooth >= self.x.min()) &
-                                               (x_peak_smooth <= self.x.max())]
-
-                y_component = pseudo_voigt(x_peak_smooth, amp, cen, sig, gam, eta)
+                if use_voigt:
+                    amp, cen, sig, gam = popt[offset:offset+4]
+                    fwhm = 2.355 * sig  # Approximate FWHM for Voigt
+                    plot_range = fwhm * 2
+                    x_peak_smooth = np.linspace(cen - plot_range, cen + plot_range, 300)
+                    x_peak_smooth = x_peak_smooth[(x_peak_smooth >= self.x.min()) &
+                                                   (x_peak_smooth <= self.x.max())]
+                    y_component = voigt(x_peak_smooth, amp, cen, sig, gam)
+                else:
+                    amp, cen, sig, gam, eta = popt[offset:offset+5]
+                    fwhm = calculate_fwhm(sig, gam, eta)
+                    plot_range = fwhm * 2
+                    x_peak_smooth = np.linspace(cen - plot_range, cen + plot_range, 300)
+                    x_peak_smooth = x_peak_smooth[(x_peak_smooth >= self.x.min()) &
+                                                   (x_peak_smooth <= self.x.max())]
+                    y_component = pseudo_voigt(x_peak_smooth, amp, cen, sig, gam, eta)
 
                 line_comp, = self.ax.plot(x_peak_smooth, y_component, '--',
-                                         linewidth=0.8,
-                                         alpha=0.6, zorder=4,
+                                         linewidth=0.8, alpha=0.6, zorder=4,
                                          label=f'Peak {i+1}')
                 self.fit_lines.append(line_comp)
 
-            # Extract fitting results and add text annotations
+            # Extract fitting results (no annotation text boxes on plot)
             n_peaks = len(self.selected_peaks)
             results = []
-            x_range = self.x.max() - self.x.min()
 
-            info_msg = "Fitting Results (Selected Peaks Only):\n" + "="*50 + "\n"
-
-            # Calculate annotation positions to avoid overlap
-            annotation_spacing = x_range * 0.08
+            info_msg = f"Fitting Results ({fit_method}):\n" + "="*50 + "\n"
 
             for i in range(n_peaks):
-                offset = i * 5
-                amp, cen, sig, gam, eta = popt[offset:offset+5]
+                offset = i * n_params_per_peak
 
-                # Calculate metrics
-                fwhm = calculate_fwhm(sig, gam, eta)
-                area = calculate_area(amp, sig, gam, eta)
+                if use_voigt:
+                    amp, cen, sig, gam = popt[offset:offset+4]
+                    fwhm = 2.355 * sig
+                    area = amp * sig * np.sqrt(2 * np.pi)
+                    eta = "N/A"
 
-                # Add text annotation on plot
-                peak_y = pseudo_voigt(cen, amp, cen, sig, gam, eta)
+                    results.append({
+                        'Peak': i + 1,
+                        'Center_2theta': cen,
+                        'FWHM': fwhm,
+                        'Area': area,
+                        'Amplitude': amp,
+                        'Sigma': sig,
+                        'Gamma': gam,
+                        'Eta': eta
+                    })
+                else:
+                    amp, cen, sig, gam, eta = popt[offset:offset+5]
+                    fwhm = calculate_fwhm(sig, gam, eta)
+                    area = calculate_area(amp, sig, gam, eta)
 
-                # Stagger annotations to avoid overlap
-                text_x = cen + annotation_spacing * (i % 2)
-                text_y = peak_y * (0.85 - 0.15 * (i % 3))
-
-                annotation_text = (f'P{i+1}\n'
-                                 f'2θ = {cen:.4f}°\n'
-                                 f'FWHM = {fwhm:.5f}\n'
-                                 f'Area = {area:.1f}')
-
-                text_annotation = self.ax.annotate(
-                    annotation_text,
-                    xy=(cen, peak_y),
-                    xytext=(text_x, text_y),
-                    fontsize=7.5,
-                    color='#4B0082',
-                    bbox=dict(boxstyle='round,pad=0.4', facecolor='#FFFACD',
-                             edgecolor='#DAA520', alpha=0.85, linewidth=1),
-                    arrowprops=dict(arrowstyle='->', color='#DAA520', lw=0.8,
-                                  connectionstyle="arc3,rad=0.2"),
-                    zorder=12
-                )
-                self.fit_lines.append(text_annotation)
-
-                results.append({
-                    'Peak': i + 1,
-                    'Center_2theta': cen,
-                    'FWHM': fwhm,
-                    'Area': area,
-                    'Amplitude': amp,
-                    'Sigma': sig,
-                    'Gamma': gam,
-                    'Eta': eta
-                })
+                    results.append({
+                        'Peak': i + 1,
+                        'Center_2theta': cen,
+                        'FWHM': fwhm,
+                        'Area': area,
+                        'Amplitude': amp,
+                        'Sigma': sig,
+                        'Gamma': gam,
+                        'Eta': eta
+                    })
 
                 info_msg += f"Peak {i+1}: 2theta={cen:.4f}, FWHM={fwhm:.5f}, Area={area:.1f}\n"
 
@@ -792,37 +819,31 @@ class PeakFittingGUI:
             self.fitted = True
 
             # Update results table
-            # Clear existing items
             for item in self.results_tree.get_children():
                 self.results_tree.delete(item)
 
-            # Insert new results
             for i in range(n_peaks):
-                offset = i * 5
-                amp, cen, sig, gam, eta = popt[offset:offset+5]
-                fwhm = calculate_fwhm(sig, gam, eta)
-                area = calculate_area(amp, sig, gam, eta)
-
+                r = results[i]
+                eta_str = f"{r['Eta']:.3f}" if isinstance(r['Eta'], float) else r['Eta']
                 self.results_tree.insert('', 'end', values=(
-                    f'{i+1}',
-                    f'{cen:.4f}',
-                    f'{fwhm:.5f}',
-                    f'{area:.2f}',
-                    f'{amp:.2f}',
-                    f'{sig:.5f}',
-                    f'{gam:.5f}',
-                    f'{eta:.3f}'
+                    f"{r['Peak']}",
+                    f"{r['Center_2theta']:.4f}",
+                    f"{r['FWHM']:.5f}",
+                    f"{r['Area']:.2f}",
+                    f"{r['Amplitude']:.2f}",
+                    f"{r['Sigma']:.5f}",
+                    f"{r['Gamma']:.5f}",
+                    eta_str
                 ))
 
             self.ax.legend(fontsize=9, loc='best', framealpha=0.9, ncol=2)
-            self.ax.set_title(f'{self.filename} - Fit Complete (Selected Peaks Only)',
+            self.ax.set_title(f'{self.filename} - Fit Complete ({fit_method})',
                             fontsize=14, fontweight='bold', color='#32CD32')
             self.canvas.draw()
 
             self.update_info(info_msg)
             self.status_label.config(text="Fitting successful!")
 
-            # Enable save button
             self.btn_save.config(state=tk.NORMAL)
             self.btn_clear_fit.config(state=tk.NORMAL)
 
