@@ -597,15 +597,6 @@ class PeakFittingGUI:
         self.update_info(f"Fitting {len(self.selected_peaks)} peaks...\n")
 
         try:
-            # Background estimate - use minimum for BG-subtracted data
-            bg0 = min(np.percentile(self.y, 5), 0)
-            bg1 = 0
-
-            # Initial parameters - allow negative bg0 for background-subtracted data
-            p0 = [bg0, bg1]
-            bounds_lower = [-np.inf, -np.inf]
-            bounds_upper = [np.inf, np.inf]
-
             # Estimate data range for better bounds
             x_range = self.x.max() - self.x.min()
             y_range = self.y.max() - self.y.min()
@@ -613,16 +604,19 @@ class PeakFittingGUI:
             # Average data spacing
             dx = np.mean(np.diff(self.x))
 
+            # Initial parameters - only peaks, no background
+            p0 = []
+            bounds_lower = []
+            bounds_upper = []
+
             for idx in self.selected_peaks:
-                # Better amplitude estimation
-                amp_guess = max(self.y[idx] - bg0, y_range * 0.01)
+                # Amplitude estimation
+                amp_guess = max(self.y[idx], y_range * 0.01)
                 cen_guess = self.x[idx]
 
-                # Estimate sigma from local peak width (FWHM ~ 2.355 * sigma)
-                # Look for half-maximum points around peak
-                half_max = (self.y[idx] + bg0) / 2 + bg0
+                # Estimate sigma from local peak width
+                half_max = self.y[idx] / 2
                 left_idx = max(0, idx - 50)
-                right_idx = min(len(self.x), idx + 50)
 
                 # Estimate width from nearby points
                 local_width = dx * 10  # Default width
@@ -640,32 +634,57 @@ class PeakFittingGUI:
                 bounds_lower.extend([0, self.x.min(), dx, dx, 0])
                 bounds_upper.extend([y_range * 10, self.x.max(), x_range * 0.5, x_range * 0.5, 1.0])
 
-            # Perform fitting with reduced maxfev to prevent freezing
-            popt, pcov = curve_fit(multi_pseudo_voigt, self.x, self.y,
+            # Define fitting function for peaks only (no background)
+            def multi_peak_only(x, *params):
+                n_peaks = len(params) // 5
+                y = np.zeros_like(x)
+                for i in range(n_peaks):
+                    offset = i * 5
+                    amp, cen, sig, gam, eta = params[offset:offset+5]
+                    y += pseudo_voigt(x, amp, cen, sig, gam, eta)
+                return y
+
+            # Perform fitting
+            popt, pcov = curve_fit(multi_peak_only, self.x, self.y,
                                   p0=p0, bounds=(bounds_lower, bounds_upper),
                                   maxfev=10000)
 
-            # Plot fit result only (no separate lines for background and individual peaks)
+            # Plot fit result
             x_smooth = np.linspace(self.x.min(), self.x.max(), 2000)
-            y_fit = multi_pseudo_voigt(x_smooth, *popt)
+            y_fit = multi_peak_only(x_smooth, *popt)
 
             line1, = self.ax.plot(x_smooth, y_fit, color='#BA55D3', linewidth=2,
                                 label='Fit', zorder=5)
             self.fit_lines.append(line1)
 
-            # Extract fitting results
+            # Extract fitting results and add text annotations
             n_peaks = len(self.selected_peaks)
             results = []
 
             info_msg = "Fitting Results:\n" + "="*50 + "\n"
 
             for i in range(n_peaks):
-                offset = 2 + i * 5
+                offset = i * 5
                 amp, cen, sig, gam, eta = popt[offset:offset+5]
 
                 # Calculate metrics
                 fwhm = calculate_fwhm(sig, gam, eta)
                 area = calculate_area(amp, sig, gam, eta)
+
+                # Add text annotation on plot
+                peak_y = pseudo_voigt(cen, amp, cen, sig, gam, eta)
+                text_annotation = self.ax.annotate(
+                    f'P{i+1}\n2θ={cen:.3f}\nFWHM={fwhm:.4f}\nArea={area:.1f}',
+                    xy=(cen, peak_y),
+                    xytext=(cen + x_range*0.02, peak_y * 0.7),
+                    fontsize=8,
+                    color='#4B0082',
+                    bbox=dict(boxstyle='round,pad=0.3', facecolor='#FFFACD',
+                             edgecolor='#DAA520', alpha=0.9),
+                    arrowprops=dict(arrowstyle='->', color='#DAA520', lw=1),
+                    zorder=12
+                )
+                self.fit_lines.append(text_annotation)
 
                 results.append({
                     'Peak': i + 1,
