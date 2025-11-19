@@ -301,15 +301,13 @@ class PeakSelector:
         print("- SCROLL WHEEL: zoom in/out at cursor position")
         print("- Use toolbar to PAN (hand icon)")
         print("")
-        print("Peak Fitting:")
-        print("- LEFT-CLICK: fit single peak with auto background")
-        print("- CTRL+CLICK: select peak positions, then click 'Fit Peak'")
-        print("  (works for both single and multiple peaks)")
-        print("")
-        print("Manual Background:")
-        print("- Click 'Select BG', then click 2 points for background")
-        print("- Use CTRL+CLICK to select peaks, then 'Fit Peak'")
-        print("- Click 'Clear BG' to return to auto background mode")
+        print("Workflow:")
+        print("1. Click 'Select BG' to enter background mode")
+        print("   - Click 2+ points to define background line")
+        print("   - Click 'Clear BG' to exit background mode")
+        print("2. Click on peak positions (shown as cyan triangles)")
+        print("3. Click 'Fit Peak' to fit selected peaks")
+        print("   (works for single or multiple peaks)")
         print("="*60 + "\n")
 
         plt.show(block=True)
@@ -349,7 +347,7 @@ class PeakSelector:
         self.fig.canvas.draw()
 
     def on_click(self, event):
-        """Handle mouse click - fit peak immediately or select for multi-peak"""
+        """Handle mouse click - select background or peak positions"""
         # Ignore clicks outside the main axes
         if event.inaxes != self.ax:
             return
@@ -366,16 +364,16 @@ class PeakSelector:
         x_click = event.xdata
         y_click = event.ydata
 
-        # Background selection mode
+        # Background selection mode - stays in this mode until user clicks other button
         if self.bg_mode:
             self.bg_points.append((x_click, y_click))
             marker, = self.ax.plot(x_click, y_click, 'ms', markersize=6, alpha=0.8)
             self.bg_markers.append(marker)
 
-            if len(self.bg_points) == 2:
-                # Draw background line
+            if len(self.bg_points) >= 2:
+                # Draw/update background line using first and last point
                 x1, y1 = self.bg_points[0]
-                x2, y2 = self.bg_points[1]
+                x2, y2 = self.bg_points[-1]
                 x_bg = np.array([min(x1, x2), max(x1, x2)])
                 slope = (y2 - y1) / (x2 - x1) if x2 != x1 else 0
                 intercept = y1 - slope * x1
@@ -386,27 +384,22 @@ class PeakSelector:
                 self.bg_line_plot, = self.ax.plot(x_bg, y_bg, 'm-', linewidth=2, alpha=0.7, label='Manual BG')
                 self.ax.legend(loc='upper right')
 
-                self.bg_mode = False
-                print(f"   Background set: ({x1:.3f}, {y1:.1f}) to ({x2:.3f}, {y2:.1f})")
-                print("   Now click on peaks to fit with this background")
+                print(f"   Background updated: ({x1:.3f}, {y1:.1f}) to ({x2:.3f}, {y2:.1f})")
+            else:
+                print(f"   Background point 1 at 2θ = {x_click:.4f}")
 
             self.fig.canvas.draw()
             return
 
-        # Check if Ctrl is pressed for multi-peak selection
-        if event.key == 'control':
-            # Add to multi-peak selection
-            self.multi_peak_positions.append(x_click)
+        # Peak selection mode - add to peak positions (no Ctrl needed)
+        self.multi_peak_positions.append(x_click)
 
-            # Mark with cyan marker (temporary) - smaller size
-            marker, = self.ax.plot(x_click, y_click, 'c^', markersize=7, alpha=0.8)
-            self.multi_peak_markers.append(marker)
-            self.fig.canvas.draw()
+        # Mark with cyan marker
+        marker, = self.ax.plot(x_click, y_click, 'c^', markersize=7, alpha=0.8)
+        self.multi_peak_markers.append(marker)
+        self.fig.canvas.draw()
 
-            print(f"   Multi-peak: added position {len(self.multi_peak_positions)} at 2θ = {x_click:.4f}")
-        else:
-            # Single peak - fit immediately
-            self.fit_and_plot_peak(x_click)
+        print(f"   Peak position {len(self.multi_peak_positions)} at 2θ = {x_click:.4f}")
 
     def fit_and_plot_peak(self, x_pos):
         """Fit a peak at the clicked position and plot result immediately"""
@@ -868,43 +861,76 @@ def select_file_dialog(initial_dir=None):
     root.destroy()
     return file_path if file_path else None
 
+# ---------- Launch empty GUI ----------
+def launch_gui():
+    """
+    Launch GUI without loading a file first.
+    User can open file through the 'Open File' button.
+    """
+    # Create figure with space for buttons
+    fig = plt.figure(figsize=(14, 8))
+
+    # Main plot area
+    ax = fig.add_axes([0.1, 0.18, 0.85, 0.72])
+    ax.set_xlabel('2θ (degree)', fontsize=12)
+    ax.set_ylabel('Intensity', fontsize=12)
+    ax.set_title('Peak Fitting Tool\nClick "Open File" to load data', fontsize=14)
+    ax.grid(True, alpha=0.3)
+    ax.text(0.5, 0.5, 'No data loaded\n\nClick "Open File" to start',
+            transform=ax.transAxes, fontsize=16, ha='center', va='center',
+            color='gray', alpha=0.7)
+
+    # Add Open File button
+    ax_open = fig.add_axes([0.4, 0.4, 0.2, 0.08])
+    btn_open = Button(ax_open, 'Open File')
+
+    def on_open(event):
+        file_path = select_file_dialog()
+        if file_path:
+            plt.close(fig)
+            run_peak_fitting(file_path)
+
+    btn_open.on_clicked(on_open)
+
+    print("\n" + "="*60)
+    print("Peak Fitting Tool")
+    print("="*60)
+    print("Click 'Open File' to load XRD data")
+    print("="*60 + "\n")
+
+    plt.show(block=True)
+
 # ---------- Main ----------
 def main():
     """
-    Example usage - modify the file path as needed
+    Launch peak fitting GUI
     """
     import sys
 
-    # Get file path from command line or use default
+    # Get file path from command line
     if len(sys.argv) > 1:
         file_path = sys.argv[1]
-    else:
-        # No argument provided - open file dialog
-        print("No file specified. Opening file selection dialog...")
-        file_path = select_file_dialog()
-        if not file_path:
-            print("No file selected. Exiting.")
+
+        # Check if path exists
+        if not os.path.exists(file_path):
+            print(f"Path not found: {file_path}")
+            print("\nUsage: python curve_fitting.py [data_file]")
+            print("Or run without arguments to open GUI first")
             return
+
+        # If it's a directory, open file dialog in that directory
+        if os.path.isdir(file_path):
+            print(f"Opening file selection dialog in: {file_path}")
+            selected_file = select_file_dialog(initial_dir=file_path)
+            if not selected_file:
+                print("No file selected. Exiting.")
+                return
+            file_path = selected_file
+
         run_peak_fitting(file_path)
-        return
-
-    # Check if path exists
-    if not os.path.exists(file_path):
-        print(f"Path not found: {file_path}")
-        print("\nUsage: python curve_fitting.py <data_file>")
-        print("Example: python curve_fitting.py sample.xy")
-        return
-
-    # If it's a directory, open file dialog in that directory
-    if os.path.isdir(file_path):
-        print(f"Opening file selection dialog in: {file_path}")
-        selected_file = select_file_dialog(initial_dir=file_path)
-        if not selected_file:
-            print("No file selected. Exiting.")
-            return
-        file_path = selected_file
-
-    run_peak_fitting(file_path)
+    else:
+        # No argument - launch empty GUI
+        launch_gui()
 
 if __name__ == "__main__":
     main()
