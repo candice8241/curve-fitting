@@ -739,14 +739,20 @@ class PeakSelector:
                 y_peak_only = pseudo_voigt(x_smooth, amp, cen, sig, gam, eta)
                 area = trapezoid(y_peak_only, x_smooth)
 
+                # Calculate peak height at center (handle spline vs linear background)
+                if self.bg_fitted and self.bg_spline is not None:
+                    peak_height = pseudo_voigt(cen, amp, cen, sig, gam, eta) + self.bg_spline(cen)
+                else:
+                    peak_height = pseudo_voigt_with_bg(cen, amp, cen, sig, gam, eta, bg0, bg1)
+
                 # Mark peak center
-                peak_marker, = self.ax.plot(cen, pseudo_voigt_with_bg(cen, amp, cen, sig, gam, eta, bg0, bg1),
+                peak_marker, = self.ax.plot(cen, peak_height,
                                             '*', markersize=12, color=colors[i])
                 plot_objects.append(peak_marker)
 
                 # Add annotation
                 self.peak_count += 1
-                text_y = pseudo_voigt_with_bg(cen, amp, cen, sig, gam, eta, bg0, bg1)
+                text_y = peak_height
                 annotation = self.ax.annotate(
                     f'#{self.peak_count}\n2θ={cen:.3f}\nFWHM={fwhm:.4f}\nArea={area:.1f}',
                     xy=(cen, text_y),
@@ -757,7 +763,16 @@ class PeakSelector:
                 )
                 annotations.append(annotation)
 
-                # Store result
+                # Store result - for spline background, approximate with linear bg at center
+                if self.bg_fitted and self.bg_spline is not None:
+                    bg_at_center = float(self.bg_spline(cen))
+                    # Approximate linear background for individual plot display
+                    stored_bg0 = bg_at_center
+                    stored_bg1 = 0
+                else:
+                    stored_bg0 = bg0
+                    stored_bg1 = bg1
+
                 self.fit_lines.append({
                     'lines': plot_objects if i == n_peaks-1 else [],  # Only store once
                     'annotation': annotation,
@@ -772,7 +787,7 @@ class PeakSelector:
                         'Eta': eta,
                         'x_local': x_local,
                         'y_local': y_local,
-                        'popt': [amp, cen, sig, gam, eta, bg0, bg1]  # Single peak format
+                        'popt': [amp, cen, sig, gam, eta, stored_bg0, stored_bg1]
                     }
                 })
 
