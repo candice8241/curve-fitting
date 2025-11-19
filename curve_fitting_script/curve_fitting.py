@@ -11,6 +11,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 from scipy.optimize import curve_fit
 from scipy.special import wofz
 from scipy.signal import savgol_filter, find_peaks
+from scipy.ndimage import gaussian_filter1d
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import os
@@ -18,6 +19,85 @@ import pandas as pd
 import warnings
 
 warnings.filterwarnings('ignore', category=UserWarning, module='matplotlib')
+
+
+# ---------- Smoothing functions ----------
+def apply_gaussian_smoothing(y, sigma=2):
+    """
+    Apply Gaussian smoothing to data.
+
+    Parameters:
+    -----------
+    y : array
+        Input data
+    sigma : float
+        Standard deviation for Gaussian kernel (higher = more smoothing)
+
+    Returns:
+    --------
+    y_smooth : array
+        Smoothed data
+    """
+    return gaussian_filter1d(y, sigma=sigma)
+
+
+def apply_savgol_smoothing(y, window_length=11, polyorder=3):
+    """
+    Apply Savitzky-Golay smoothing to data.
+
+    Parameters:
+    -----------
+    y : array
+        Input data
+    window_length : int
+        Length of the filter window (must be odd)
+    polyorder : int
+        Order of the polynomial used to fit the samples
+
+    Returns:
+    --------
+    y_smooth : array
+        Smoothed data
+    """
+    # Ensure window_length is odd and not larger than data
+    window_length = min(window_length, len(y))
+    if window_length % 2 == 0:
+        window_length -= 1
+    if window_length < polyorder + 2:
+        window_length = polyorder + 2
+        if window_length % 2 == 0:
+            window_length += 1
+
+    return savgol_filter(y, window_length, polyorder)
+
+
+def apply_smoothing(y, method='gaussian', **kwargs):
+    """
+    Apply smoothing to data using specified method.
+
+    Parameters:
+    -----------
+    y : array
+        Input data
+    method : str
+        'gaussian' or 'savgol'
+    **kwargs : dict
+        Additional parameters for the smoothing method
+
+    Returns:
+    --------
+    y_smooth : array
+        Smoothed data
+    """
+    if method == 'gaussian':
+        sigma = kwargs.get('sigma', 2)
+        return apply_gaussian_smoothing(y, sigma=sigma)
+    elif method == 'savgol':
+        window_length = kwargs.get('window_length', 11)
+        polyorder = kwargs.get('polyorder', 3)
+        return apply_savgol_smoothing(y, window_length=window_length, polyorder=polyorder)
+    else:
+        return y
 
 # ---------- Peak profile functions ----------
 def pseudo_voigt(x, amplitude, center, sigma, gamma, eta):
@@ -257,6 +337,13 @@ class PeakFittingGUI:
         # Distance threshold for grouping (in FWHM units)
         self.group_distance_threshold = 2.5
 
+        # Smoothing settings
+        self.smoothing_enabled = tk.BooleanVar(value=False)
+        self.smoothing_method = tk.StringVar(value="gaussian")
+        self.smoothing_sigma = tk.DoubleVar(value=2.0)
+        self.smoothing_window = tk.IntVar(value=11)
+        self.y_smoothed = None  # Store smoothed data
+
         self.create_widgets()
 
     def create_widgets(self):
@@ -369,6 +456,70 @@ class PeakFittingGUI:
                                     bg='#E6D5F5', fg='#4B0082',
                                     font=('Courier', 9))
         self.coord_label.pack(side=tk.RIGHT, padx=10, pady=10)
+
+        # Smoothing control panel
+        smooth_frame = tk.Frame(self.master, bg='#D5E6F5', height=50)
+        smooth_frame.pack(side=tk.TOP, fill=tk.X, padx=5, pady=2)
+        smooth_frame.pack_propagate(False)
+
+        smooth_label = tk.Label(smooth_frame, text="Smoothing:",
+                               bg='#D5E6F5', fg='#0047AB',
+                               font=('Arial', 10, 'bold'))
+        smooth_label.pack(side=tk.LEFT, padx=10, pady=10)
+
+        # Smoothing enable checkbox
+        self.chk_smooth = tk.Checkbutton(smooth_frame, text="Enable",
+                                         variable=self.smoothing_enabled,
+                                         bg='#D5E6F5', fg='#0047AB',
+                                         font=('Arial', 9, 'bold'),
+                                         command=self.on_smoothing_changed)
+        self.chk_smooth.pack(side=tk.LEFT, padx=5, pady=8)
+
+        # Smoothing method
+        tk.Label(smooth_frame, text="Method:",
+                bg='#D5E6F5', fg='#0047AB',
+                font=('Arial', 9)).pack(side=tk.LEFT, padx=(10, 2), pady=10)
+
+        smooth_method_combo = ttk.Combobox(smooth_frame, textvariable=self.smoothing_method,
+                                           values=["gaussian", "savgol"],
+                                           state="readonly", width=8)
+        smooth_method_combo.pack(side=tk.LEFT, padx=2, pady=8)
+        smooth_method_combo.bind('<<ComboboxSelected>>', lambda e: self.on_smoothing_changed())
+
+        # Sigma/Window parameter
+        tk.Label(smooth_frame, text="Sigma:",
+                bg='#D5E6F5', fg='#0047AB',
+                font=('Arial', 9)).pack(side=tk.LEFT, padx=(10, 2), pady=10)
+
+        self.smooth_sigma_entry = tk.Entry(smooth_frame, textvariable=self.smoothing_sigma,
+                                           width=5, font=('Arial', 9))
+        self.smooth_sigma_entry.pack(side=tk.LEFT, padx=2, pady=8)
+
+        tk.Label(smooth_frame, text="Window:",
+                bg='#D5E6F5', fg='#0047AB',
+                font=('Arial', 9)).pack(side=tk.LEFT, padx=(10, 2), pady=10)
+
+        self.smooth_window_entry = tk.Entry(smooth_frame, textvariable=self.smoothing_window,
+                                            width=5, font=('Arial', 9))
+        self.smooth_window_entry.pack(side=tk.LEFT, padx=2, pady=8)
+
+        # Apply smoothing button
+        self.btn_apply_smooth = tk.Button(smooth_frame, text="Apply",
+                                          bg='#4682B4', fg='white',
+                                          font=('Arial', 9, 'bold'),
+                                          width=8, height=1,
+                                          command=self.apply_smoothing_to_data,
+                                          state=tk.DISABLED)
+        self.btn_apply_smooth.pack(side=tk.LEFT, padx=10, pady=8)
+
+        # Reset to original button
+        self.btn_reset_smooth = tk.Button(smooth_frame, text="Reset Data",
+                                          bg='#CD5C5C', fg='white',
+                                          font=('Arial', 9, 'bold'),
+                                          width=10, height=1,
+                                          command=self.reset_to_original_data,
+                                          state=tk.DISABLED)
+        self.btn_reset_smooth.pack(side=tk.LEFT, padx=5, pady=8)
 
         # Results display panel
         results_frame = tk.Frame(self.master, bg='#F5E6FF', height=120)
@@ -524,6 +675,8 @@ class PeakFittingGUI:
             self.btn_clear_bg.config(state=tk.NORMAL)
             self.btn_auto_find.config(state=tk.NORMAL)
             self.btn_overlap_mode.config(state=tk.NORMAL)
+            self.btn_apply_smooth.config(state=tk.NORMAL)
+            self.btn_reset_smooth.config(state=tk.NORMAL)
 
             self.status_label.config(text=f"Loaded: {self.filename}")
             self.update_info(f"File loaded: {self.filename}\nData points: {len(self.x)}\n")
@@ -887,15 +1040,104 @@ class PeakFittingGUI:
 
         return peak_groups if peak_groups else None
 
+    def on_smoothing_changed(self):
+        """Called when smoothing settings change"""
+        pass  # Placeholder for future use
+
+    def apply_smoothing_to_data(self):
+        """Apply smoothing to the current data"""
+        if self.x is None or self.y is None:
+            messagebox.showwarning("No Data", "Please load a file first!")
+            return
+
+        try:
+            method = self.smoothing_method.get()
+            sigma = self.smoothing_sigma.get()
+            window = self.smoothing_window.get()
+
+            if method == 'gaussian':
+                self.y_smoothed = apply_smoothing(self.y_original, method='gaussian', sigma=sigma)
+                self.update_info(f"Applied Gaussian smoothing (sigma={sigma})\n")
+            else:
+                self.y_smoothed = apply_smoothing(self.y_original, method='savgol', window_length=window)
+                self.update_info(f"Applied Savitzky-Golay smoothing (window={window})\n")
+
+            # Update the working data
+            self.y = self.y_smoothed.copy()
+
+            # Redraw plot
+            self.ax.clear()
+            self.ax.plot(self.x, self.y, '-', color='#4B0082', linewidth=0.8, label='Smoothed Data')
+            self.ax.set_facecolor('#FAF0FF')
+            self.ax.grid(True, alpha=0.3, linestyle='--', color='#BA55D3')
+            self.ax.set_xlabel('2theta (degree)', fontsize=13, fontweight='bold', color='#BA55D3')
+            self.ax.set_ylabel('Intensity', fontsize=13, fontweight='bold', color='#BA55D3')
+            self.ax.set_title(f'{self.filename} (Smoothed)\nClick on peaks to select',
+                            fontsize=14, fontweight='bold', color='#9370DB')
+
+            # Re-add peak markers if any
+            for i, idx in enumerate(self.selected_peaks):
+                marker, = self.ax.plot(self.x[idx], self.y[idx], '*', color='#FF1493',
+                                      markersize=15, markeredgecolor='#FFD700',
+                                      markeredgewidth=1.5, zorder=10)
+                text = self.ax.text(self.x[idx], self.y[idx] * 1.03, f'P{i+1}',
+                                   ha='center', fontsize=8, color='#FF1493',
+                                   fontweight='bold', zorder=11)
+                self.peak_markers[i] = marker
+                self.peak_texts[i] = text
+
+            self.canvas.draw()
+            self.status_label.config(text="Smoothing applied")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to apply smoothing:\n{str(e)}")
+
+    def reset_to_original_data(self):
+        """Reset data to original (unsmoothed)"""
+        if self.x is None or self.y_original is None:
+            messagebox.showwarning("No Data", "Please load a file first!")
+            return
+
+        self.y = self.y_original.copy()
+        self.y_smoothed = None
+
+        # Redraw plot
+        self.ax.clear()
+        self.ax.plot(self.x, self.y, '-', color='#4B0082', linewidth=0.8, label='Data')
+        self.ax.set_facecolor('#FAF0FF')
+        self.ax.grid(True, alpha=0.3, linestyle='--', color='#BA55D3')
+        self.ax.set_xlabel('2theta (degree)', fontsize=13, fontweight='bold', color='#BA55D3')
+        self.ax.set_ylabel('Intensity', fontsize=13, fontweight='bold', color='#BA55D3')
+        self.ax.set_title(f'{self.filename}\nClick on peaks to select',
+                        fontsize=14, fontweight='bold', color='#9370DB')
+
+        # Re-add peak markers if any
+        for i, idx in enumerate(self.selected_peaks):
+            marker, = self.ax.plot(self.x[idx], self.y[idx], '*', color='#FF1493',
+                                  markersize=15, markeredgecolor='#FFD700',
+                                  markeredgewidth=1.5, zorder=10)
+            text = self.ax.text(self.x[idx], self.y[idx] * 1.03, f'P{i+1}',
+                               ha='center', fontsize=8, color='#FF1493',
+                               fontweight='bold', zorder=11)
+            self.peak_markers[i] = marker
+            self.peak_texts[i] = text
+
+        self.canvas.draw()
+        self.update_info("Data reset to original\n")
+        self.status_label.config(text="Data reset")
+
     def toggle_overlap_mode(self):
         """Toggle overlap mode for better handling of overlapping peaks"""
         self.overlap_mode = not self.overlap_mode
         if self.overlap_mode:
             self.btn_overlap_mode.config(bg='#32CD32', text="Overlap ON")
-            self.update_info("Overlap mode ON: Using relaxed parameters for overlapping peaks\n")
+            # Use smaller threshold for grouping when overlap mode is on
+            self.group_distance_threshold = 3.5
+            self.update_info("Overlap mode ON: Peaks within 3.5*FWHM will be grouped together\n")
         else:
             self.btn_overlap_mode.config(bg='#FF6B9D', text="Overlap")
-            self.update_info("Overlap mode OFF: Standard fitting parameters\n")
+            self.group_distance_threshold = 2.5
+            self.update_info("Overlap mode OFF: Standard grouping (2.5*FWHM)\n")
 
     def fit_peaks(self):
         """
