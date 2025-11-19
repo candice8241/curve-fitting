@@ -818,7 +818,7 @@ class PeakFittingGUI:
 
                     # Wide amplitude bounds for shoulder - key for emerging peaks
                     amp_lower = y_range * 0.0001  # Very very small lower bound
-                    amp_upper = main_peak_height * 5  # Can be up to 5x main peak (generous)
+                    amp_upper = main_peak_height * 1.5  # Can be up to 1.5x main peak
                     # User clicked position is the peak center - only allow small movement
                     center_tolerance = fwhm_estimate * 0.15  # Very tight: 15% of FWHM
                 else:
