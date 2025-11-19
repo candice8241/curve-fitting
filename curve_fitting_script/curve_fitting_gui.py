@@ -704,12 +704,14 @@ class PeakFittingGUI:
                     main_peak_local_idx = np.argmax([self.y[idx] for idx in group_peaks])
                     main_peak_fwhm = fwhm_estimates[group[main_peak_local_idx]]
 
-                    # Mark other peaks as shoulders and use main peak's FWHM
+                    # Mark other peaks as shoulders
                     for local_i, global_i in enumerate(group):
                         if local_i != main_peak_local_idx:
                             is_shoulder[global_i] = True
-                            # Use main peak's FWHM as reference for shoulder
-                            fwhm_estimates[global_i] = main_peak_fwhm * 0.8
+                            # Keep shoulder's own FWHM estimate if reasonable,
+                            # otherwise use main peak's FWHM as reference
+                            if fwhm_estimates[global_i] < dx * 3:
+                                fwhm_estimates[global_i] = main_peak_fwhm * 1.0  # Same as main peak
 
             # Report overlapping peaks
             for group in peak_groups:
@@ -782,30 +784,45 @@ class PeakFittingGUI:
                 sig_guess = fwhm_estimate / 2.355
                 gam_guess = fwhm_estimate / 2
 
-                # For shoulder peaks, estimate amplitude differently
+                # Estimate amplitude based on local height
+                local_height = self.y[idx] - y_min
+
+                # For shoulder/emerging peaks, use different strategy
                 if is_shoulder[i]:
                     # Find the main peak in the same group
                     main_peak_height = y_range * 0.3  # Default
+                    main_peak_amp = y_range * 0.3  # Default amplitude
                     for group in peak_groups:
                         if i in group:
                             group_peaks = [sorted_peaks[g] for g in group]
-                            main_peak_height = max([self.y[p] - y_min for p in group_peaks])
+                            heights = [self.y[p] - y_min for p in group_peaks]
+                            main_peak_height = max(heights)
+                            main_peak_amp = main_peak_height
                             break
 
-                    # Shoulder amplitude: estimate as fraction of main peak
-                    # Use the difference between this point and a baseline estimate
-                    local_height = self.y[idx] - y_min
-                    amp_guess = local_height * 0.3  # Start with 30% of local height
-                    if amp_guess < main_peak_height * 0.05:
-                        amp_guess = main_peak_height * 0.1  # At least 10% of main peak
+                    # For emerging peak: use a fraction of main peak amplitude
+                    # This is more reliable than local height which is dominated by main peak
+                    # Start with 30% of main peak as initial guess for shoulder
+                    amp_guess = main_peak_amp * 0.3
 
-                    # Relaxed amplitude bounds but tight center position
-                    amp_lower = y_range * 0.001  # Very small lower bound
-                    amp_upper = main_peak_height * 2  # Can be up to 2x main peak
+                    # But also check if local height suggests something different
+                    # If local height is significant, use it as a floor
+                    local_based_guess = local_height * 0.4
+                    if local_based_guess > amp_guess:
+                        amp_guess = local_based_guess
+
+                    # Minimum amplitude should be reasonable
+                    min_amp = main_peak_height * 0.02  # At least 2% of main peak
+                    if amp_guess < min_amp:
+                        amp_guess = min_amp
+
+                    # Wide amplitude bounds for shoulder - key for emerging peaks
+                    amp_lower = y_range * 0.0001  # Very very small lower bound
+                    amp_upper = main_peak_height * 5  # Can be up to 5x main peak (generous)
                     # User clicked position is the peak center - only allow small movement
                     center_tolerance = fwhm_estimate * 0.15  # Very tight: 15% of FWHM
                 else:
-                    amp_guess = self.y[idx] - y_min
+                    amp_guess = local_height
                     if amp_guess <= 0:
                         amp_guess = y_range * 0.1
 
@@ -814,17 +831,27 @@ class PeakFittingGUI:
                     # For main peaks, also keep center close to clicked position
                     center_tolerance = fwhm_estimate * 0.2  # 20% of FWHM
 
+                # Set sigma/gamma bounds - wider for shoulders to allow more shape flexibility
+                if is_shoulder[i]:
+                    sig_lower = dx * 0.05  # Allow narrower peaks for shoulders
+                    gam_lower = dx * 0.05
+                    sig_upper = fwhm_estimate * 8  # Allow wider range for shoulders
+                    gam_upper = fwhm_estimate * 8
+                else:
+                    sig_lower = dx * 0.1
+                    gam_lower = dx * 0.1
+                    sig_upper = fwhm_estimate * 5
+                    gam_upper = fwhm_estimate * 5
+
                 if use_voigt:
                     p0.extend([amp_guess, cen_guess, sig_guess, gam_guess])
-                    bounds_lower.extend([amp_lower, cen_guess - center_tolerance, dx * 0.1, dx * 0.1])
-                    bounds_upper.extend([amp_upper, cen_guess + center_tolerance,
-                                       fwhm_estimate * 5, fwhm_estimate * 5])
+                    bounds_lower.extend([amp_lower, cen_guess - center_tolerance, sig_lower, gam_lower])
+                    bounds_upper.extend([amp_upper, cen_guess + center_tolerance, sig_upper, gam_upper])
                 else:
                     eta_guess = 0.5
                     p0.extend([amp_guess, cen_guess, sig_guess, gam_guess, eta_guess])
-                    bounds_lower.extend([amp_lower, cen_guess - center_tolerance, dx * 0.1, dx * 0.1, 0])
-                    bounds_upper.extend([amp_upper, cen_guess + center_tolerance,
-                                       fwhm_estimate * 5, fwhm_estimate * 5, 1.0])
+                    bounds_lower.extend([amp_lower, cen_guess - center_tolerance, sig_lower, gam_lower, 0])
+                    bounds_upper.extend([amp_upper, cen_guess + center_tolerance, sig_upper, gam_upper, 1.0])
 
             # Define fitting function
             if use_voigt:
@@ -846,10 +873,18 @@ class PeakFittingGUI:
                         y += pseudo_voigt(x, amp, cen, sig, gam, eta)
                     return y
 
-            # Perform fitting
-            popt, pcov = curve_fit(multi_peak_func, x_fit, y_fit,
-                                  p0=p0, bounds=(bounds_lower, bounds_upper),
-                                  maxfev=50000)
+            # Perform fitting with robust method
+            # Use Trust Region Reflective with soft_l1 loss for better handling of overlapping peaks
+            try:
+                popt, pcov = curve_fit(multi_peak_func, x_fit, y_fit,
+                                      p0=p0, bounds=(bounds_lower, bounds_upper),
+                                      method='trf', loss='soft_l1',
+                                      maxfev=100000)
+            except Exception:
+                # Fallback to default method if trf fails
+                popt, pcov = curve_fit(multi_peak_func, x_fit, y_fit,
+                                      p0=p0, bounds=(bounds_lower, bounds_upper),
+                                      maxfev=100000)
 
             # Plot fit result for each group window
             plotted_regions = set()
