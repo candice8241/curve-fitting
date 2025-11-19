@@ -838,14 +838,32 @@ class PeakFittingGUI:
                 group_fwhms = [fwhm_estimates[i] for i in group]
 
                 # Create fitting window for this group
+                # Window = peak center ± 3×FWHM (covers ~99% of peak area)
                 left_center = self.x[min(group_peak_indices)]
                 right_center = self.x[max(group_peak_indices)]
-                window_left = left_center - group_fwhms[0] * 3
-                window_right = right_center + group_fwhms[-1] * 3
+                left_fwhm = group_fwhms[0]
+                right_fwhm = group_fwhms[-1]
+
+                window_left = left_center - left_fwhm * 3
+                window_right = right_center + right_fwhm * 3
+                window_width = window_right - window_left
 
                 left_idx = max(0, np.searchsorted(self.x, window_left))
                 right_idx = min(len(self.x), np.searchsorted(self.x, window_right))
                 group_windows.append((left_idx, right_idx))
+
+                # Display window info
+                if len(group) == 1:
+                    avg_fwhm = group_fwhms[0]
+                    self.update_info(f"Group {g_idx+1}: Peak {sorted_indices[group[0]]+1}, "
+                                   f"FWHM={avg_fwhm:.4f}, Window=[{window_left:.2f}, {window_right:.2f}] "
+                                   f"(±3×FWHM)\n")
+                else:
+                    avg_fwhm = np.mean(group_fwhms)
+                    peak_nums = [sorted_indices[g]+1 for g in group]
+                    self.update_info(f"Group {g_idx+1}: Peaks {peak_nums}, "
+                                   f"Avg FWHM={avg_fwhm:.4f}, Window=[{window_left:.2f}, {window_right:.2f}] "
+                                   f"(width={window_width:.2f})\n")
 
                 x_fit = self.x[left_idx:right_idx]
                 y_fit = self.y[left_idx:right_idx]
