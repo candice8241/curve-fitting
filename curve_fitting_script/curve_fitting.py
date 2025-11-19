@@ -573,39 +573,52 @@ class PeakSelector:
             self.bg_line_plot.remove()
 
         # Fit background with minimal curvature
-        # Try linear first, then quadratic only if it significantly improves fit
+        # Use weighted least squares that penalizes curvature
         # Goal: good fit to points while keeping curvature near zero
 
-        # Linear fit
+        # Data range for normalization
+        x_range = x_bg.max() - x_bg.min()
+        y_range = max(y_bg.max() - y_bg.min(), 1)
+
+        # Linear fit (always calculated as baseline)
         coeffs_1 = np.polyfit(x_bg, y_bg, 1)
         poly_1 = np.poly1d(coeffs_1)
-        residuals_1 = np.sum((y_bg - poly_1(x_bg))**2)
+        rmse_1 = np.sqrt(np.mean((y_bg - poly_1(x_bg))**2))
+        rel_error_1 = rmse_1 / y_range
 
-        # Only try quadratic if we have more than 2 points
+        best_poly = poly_1
+        best_degree = 1
+        best_score = rel_error_1
+
+        # Try quadratic only if we have more than 2 points
         if len(points) > 2:
-            # Quadratic fit
             coeffs_2 = np.polyfit(x_bg, y_bg, 2)
             poly_2 = np.poly1d(coeffs_2)
-            residuals_2 = np.sum((y_bg - poly_2(x_bg))**2)
+            rmse_2 = np.sqrt(np.mean((y_bg - poly_2(x_bg))**2))
+            rel_error_2 = rmse_2 / y_range
 
-            # Calculate curvature (second derivative = 2*a for ax^2+bx+c)
-            curvature = abs(2 * coeffs_2[0])
+            # Normalized curvature: how much does y change due to curvature over x range
+            # For y = ax^2, curvature contribution = a * x_range^2
+            curvature_contribution = abs(coeffs_2[0]) * (x_range ** 2)
+            norm_curvature = curvature_contribution / y_range
 
-            # Use quadratic only if:
-            # 1. It reduces residuals by more than 50%
-            # 2. And curvature is very small (near zero)
-            # Otherwise prefer linear for zero curvature
-            improvement = (residuals_1 - residuals_2) / (residuals_1 + 1e-10)
+            # Score: balance fit quality and smoothness
+            # Penalize curvature heavily to prefer smooth curves
+            curvature_penalty = 5.0  # Weight for curvature penalty
+            score_2 = rel_error_2 + curvature_penalty * norm_curvature
 
-            if improvement > 0.5 and curvature < 0.1:
-                self.bg_spline = poly_2
-                print(f"   Using quadratic fit (improvement: {improvement*100:.1f}%, curvature: {curvature:.4f})")
+            # Use quadratic only if it gives better combined score
+            if score_2 < best_score * 0.8:  # Must be significantly better
+                best_poly = poly_2
+                best_degree = 2
+                best_score = score_2
+                print(f"   Using quadratic fit (rel_error: {rel_error_2:.4f}, norm_curvature: {norm_curvature:.4f})")
             else:
-                self.bg_spline = poly_1
-                print(f"   Using linear fit (curvature: 0)")
+                print(f"   Using linear fit (rel_error: {rel_error_1:.4f}, curvature: 0)")
         else:
-            self.bg_spline = poly_1
-            print(f"   Using linear fit (curvature: 0)")
+            print(f"   Using linear fit (rel_error: {rel_error_1:.4f}, curvature: 0)")
+
+        self.bg_spline = best_poly
 
         # Plot fitted background - only within the range of selected points
         x_smooth = np.linspace(x_bg.min(), x_bg.max(), 500)
