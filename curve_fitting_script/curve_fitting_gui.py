@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from scipy.optimize import curve_fit
 from scipy.special import wofz
-from scipy.signal import savgol_filter
+from scipy.signal import savgol_filter, find_peaks
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import os
@@ -177,6 +177,11 @@ class PeakFittingGUI:
                                   bg='#DDA0DD', fg='#4B0082',
                                   command=self.undo_action, state=tk.DISABLED, **btn_style)
         self.btn_undo.pack(side=tk.LEFT, padx=5, pady=8)
+
+        self.btn_auto_find = tk.Button(control_frame, text="Auto Find",
+                                       bg='#4169E1', fg='white',
+                                       command=self.auto_find_peaks, state=tk.DISABLED, **btn_style)
+        self.btn_auto_find.pack(side=tk.LEFT, padx=5, pady=8)
 
         self.status_label = tk.Label(control_frame, text="Please load a file to start",
                                      bg='#BA55D3', fg='white',
@@ -386,6 +391,7 @@ class PeakFittingGUI:
             self.btn_reset.config(state=tk.NORMAL)
             self.btn_select_bg.config(state=tk.NORMAL)
             self.btn_clear_bg.config(state=tk.NORMAL)
+            self.btn_auto_find.config(state=tk.NORMAL)
 
             self.status_label.config(text=f"Loaded: {self.filename}")
             self.update_info(f"File loaded: {self.filename}\nData points: {len(self.x)}\n")
@@ -591,6 +597,170 @@ class PeakFittingGUI:
 
         if self.x is not None:
             self.canvas.draw()
+
+    def auto_find_peaks(self):
+        """
+        Automatically find all peaks in the data using scipy.signal.find_peaks
+        with prominence and height filtering
+        """
+        if self.x is None or self.y is None:
+            messagebox.showwarning("No Data", "Please load a file first!")
+            return
+
+        # Clear existing peaks first
+        self.reset_peaks()
+
+        try:
+            # Smooth data for better peak detection
+            if len(self.y) > 15:
+                window_length = min(15, len(self.y) // 2 * 2 + 1)
+                y_smooth = savgol_filter(self.y, window_length, 3)
+            else:
+                y_smooth = self.y
+
+            # Calculate data statistics for adaptive thresholds
+            y_range = np.max(self.y) - np.min(self.y)
+            y_std = np.std(self.y)
+            dx = np.mean(np.diff(self.x))
+
+            # Adaptive parameters based on data characteristics
+            # Minimum height: above noise level
+            height_threshold = np.min(self.y) + y_range * 0.05
+
+            # Prominence: peak must stand out from surroundings
+            prominence_threshold = y_range * 0.02
+
+            # Minimum distance between peaks (in data points)
+            # Estimate based on typical XRD peak width
+            min_distance = max(5, int(0.1 / dx)) if dx > 0 else 5
+
+            # Find peaks with multiple criteria
+            peaks, properties = find_peaks(
+                y_smooth,
+                height=height_threshold,
+                prominence=prominence_threshold,
+                distance=min_distance,
+                width=2  # Minimum width in data points
+            )
+
+            if len(peaks) == 0:
+                # Try with less strict parameters
+                peaks, properties = find_peaks(
+                    y_smooth,
+                    height=np.min(self.y) + y_range * 0.02,
+                    prominence=y_range * 0.01,
+                    distance=3
+                )
+
+            if len(peaks) == 0:
+                messagebox.showinfo("No Peaks Found",
+                    "No peaks detected automatically.\n"
+                    "Try manual selection or adjust your data.")
+                return
+
+            # Additional filtering: check if peak is significantly above local baseline
+            filtered_peaks = []
+            for idx in peaks:
+                # Local window
+                window = 30
+                left = max(0, idx - window)
+                right = min(len(self.y), idx + window)
+
+                # Local baseline from edges
+                edge_n = max(3, (right - left) // 10)
+                local_baseline = (np.mean(self.y[left:left+edge_n]) +
+                                 np.mean(self.y[right-edge_n:right])) / 2
+
+                # Check if peak is at least 10% above local baseline
+                if self.y[idx] > local_baseline * 1.1:
+                    filtered_peaks.append(idx)
+
+            peaks = filtered_peaks
+
+            if len(peaks) == 0:
+                messagebox.showinfo("No Peaks Found",
+                    "No significant peaks detected.\n"
+                    "Try manual selection.")
+                return
+
+            # Add peaks to selection
+            for idx in peaks:
+                point_x = self.x[idx]
+                point_y = self.y[idx]
+
+                marker, = self.ax.plot(point_x, point_y, '*', color='#FF1493',
+                                      markersize=15, markeredgecolor='#FFD700',
+                                      markeredgewidth=1.5, zorder=10)
+                text = self.ax.text(point_x, point_y * 1.03, f'P{len(self.selected_peaks)+1}',
+                                   ha='center', fontsize=8, color='#FF1493',
+                                   fontweight='bold', zorder=11,
+                                   bbox=dict(boxstyle='round,pad=0.2', facecolor='#FFE4E1',
+                                           edgecolor='#FF69B4', linewidth=1))
+
+                self.selected_peaks.append(idx)
+                self.peak_markers.append(marker)
+                self.peak_texts.append(text)
+
+            self.canvas.draw()
+
+            # Group peaks for display
+            groups = self._group_peaks_for_display()
+
+            self.update_info(f"Auto-detected {len(peaks)} peaks\n")
+            if groups:
+                self.update_info(f"Peak groups: {groups}\n")
+            self.status_label.config(text=f"{len(peaks)} peaks auto-detected")
+
+        except Exception as e:
+            import traceback
+            messagebox.showerror("Error", f"Auto peak detection failed:\n{str(e)}")
+            self.update_info(f"Auto detection error: {traceback.format_exc()}\n")
+
+    def _group_peaks_for_display(self):
+        """
+        Group peaks and return grouping info for display
+        """
+        if len(self.selected_peaks) < 2:
+            return None
+
+        # Sort peaks by position
+        sorted_indices = sorted(range(len(self.selected_peaks)),
+                               key=lambda i: self.x[self.selected_peaks[i]])
+        sorted_peaks = [self.selected_peaks[i] for i in sorted_indices]
+
+        # Estimate FWHM for each peak
+        fwhm_estimates = []
+        for idx in sorted_peaks:
+            window_size = 50
+            left = max(0, idx - window_size)
+            right = min(len(self.x), idx + window_size)
+            x_local = self.x[left:right]
+            y_local = self.y[left:right]
+            local_peak_idx = idx - left
+            fwhm, _ = estimate_fwhm_robust(x_local, y_local, local_peak_idx)
+            fwhm_estimates.append(fwhm)
+
+        # Group overlapping peaks
+        peak_groups = []
+        current_group = [sorted_indices[0] + 1]  # 1-indexed for display
+
+        for i in range(1, len(sorted_peaks)):
+            prev_idx = sorted_peaks[i-1]
+            curr_idx = sorted_peaks[i]
+            distance = abs(self.x[curr_idx] - self.x[prev_idx])
+            avg_fwhm = (fwhm_estimates[i-1] + fwhm_estimates[i]) / 2
+
+            if distance < avg_fwhm * 2.5:
+                current_group.append(sorted_indices[i] + 1)
+            else:
+                if len(current_group) > 1:
+                    peak_groups.append(current_group)
+                current_group = [sorted_indices[i] + 1]
+
+        if len(current_group) > 1:
+            peak_groups.append(current_group)
+
+        return peak_groups if peak_groups else None
 
     def fit_peaks(self):
         """
