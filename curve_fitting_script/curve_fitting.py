@@ -1072,36 +1072,66 @@ class PeakFittingGUI:
                     if len(self.bg_points) < 2:
                         self.btn_subtract_bg.config(state=tk.DISABLED)
         elif not self.fitted:
-            # Search for local maximum near the click position
-            search_window = 20  # Number of points to search on each side
-            left_idx = max(0, idx - search_window)
-            right_idx = min(len(self.y), idx + search_window + 1)
+            if event.button == 1:  # Left click - add peak
+                # Search for local maximum near the click position
+                search_window = 20  # Number of points to search on each side
+                left_idx = max(0, idx - search_window)
+                right_idx = min(len(self.y), idx + search_window + 1)
 
-            # Find the maximum in the local window
-            local_y = self.y[left_idx:right_idx]
-            local_max_idx = np.argmax(local_y)
-            peak_idx = left_idx + local_max_idx
+                # Find the maximum in the local window
+                local_y = self.y[left_idx:right_idx]
+                local_max_idx = np.argmax(local_y)
+                peak_idx = left_idx + local_max_idx
 
-            # Use the local maximum position
-            peak_x = self.x[peak_idx]
-            peak_y = self.y[peak_idx]
+                # Use the local maximum position
+                peak_x = self.x[peak_idx]
+                peak_y = self.y[peak_idx]
 
-            marker, = self.ax.plot(peak_x, peak_y, '*', color='#FF1493',
-                                  markersize=15, markeredgecolor='#FFD700',
-                                  markeredgewidth=1.5, zorder=10)
-            text = self.ax.text(peak_x, peak_y * 1.03, f'P{len(self.selected_peaks)+1}',
-                               ha='center', fontsize=8, color='#FF1493',
-                               fontweight='bold', zorder=11)
+                marker, = self.ax.plot(peak_x, peak_y, '*', color='#FF1493',
+                                      markersize=15, markeredgecolor='#FFD700',
+                                      markeredgewidth=1.5, zorder=10)
+                text = self.ax.text(peak_x, peak_y * 1.03, f'P{len(self.selected_peaks)+1}',
+                                   ha='center', fontsize=8, color='#FF1493',
+                                   fontweight='bold', zorder=11)
 
-            self.selected_peaks.append(peak_idx)
-            self.peak_markers.append(marker)
-            self.peak_texts.append(text)
-            self.canvas.draw()
+                self.selected_peaks.append(peak_idx)
+                self.peak_markers.append(marker)
+                self.peak_texts.append(text)
+                self.canvas.draw()
 
-            self.undo_stack.append(('peak', len(self.selected_peaks) - 1))
-            self.btn_undo.config(state=tk.NORMAL)
-            self.update_info(f"Peak {len(self.selected_peaks)} at 2theta = {peak_x:.4f} (auto-adjusted to local max)\n")
-            self.status_label.config(text=f"{len(self.selected_peaks)} peak(s) selected")
+                self.undo_stack.append(('peak', len(self.selected_peaks) - 1))
+                self.btn_undo.config(state=tk.NORMAL)
+                self.update_info(f"Peak {len(self.selected_peaks)} at 2theta = {peak_x:.4f} (auto-adjusted to local max)\n")
+                self.status_label.config(text=f"{len(self.selected_peaks)} peak(s) selected")
+
+            elif event.button == 3:  # Right click - remove nearest peak
+                if len(self.selected_peaks) > 0:
+                    # Find nearest selected peak
+                    peak_positions = [self.x[peak_idx] for peak_idx in self.selected_peaks]
+                    distances = [abs(x_click - pos) for pos in peak_positions]
+                    nearest_idx = np.argmin(distances)
+
+                    # Remove the peak
+                    removed_peak_idx = self.selected_peaks.pop(nearest_idx)
+                    removed_peak_x = self.x[removed_peak_idx]
+
+                    # Remove marker and text from plot
+                    marker = self.peak_markers.pop(nearest_idx)
+                    text = self.peak_texts.pop(nearest_idx)
+                    try:
+                        marker.remove()
+                        text.remove()
+                    except:
+                        pass
+
+                    # Update labels for remaining peaks
+                    for i, text_obj in enumerate(self.peak_texts):
+                        text_obj.set_text(f'P{i+1}')
+
+                    self.canvas.draw()
+
+                    self.update_info(f"Peak removed at 2theta = {removed_peak_x:.4f}\n")
+                    self.status_label.config(text=f"{len(self.selected_peaks)} peak(s) selected")
 
     def toggle_bg_selection(self):
         """Toggle background selection mode"""
