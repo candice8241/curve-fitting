@@ -1,0 +1,26 @@
+# XRD Data Post-Processing GUI Application Dependencies
+# 用于GUI应用的Python依赖包
+
+# Core GUI Framework
+# tkinter is included with Python, no need to install separately
+
+# Scientific Computing
+numpy>=1.20.0
+scipy>=1.7.0
+pandas>=1.3.0
+
+# Plotting
+matplotlib>=3.4.0
+
+# Image Processing (if needed)
+Pillow>=8.0.0
+
+# PyInstaller for building executable
+pyinstaller>=5.0.0
+
+# Optional: Additional packages that might be needed
+# Uncomment if your modules use these:
+# scikit-learn>=1.0.0
+# openpyxl>=3.0.0  # For Excel file support
+# h5py>=3.0.0      # For HDF5 file support
+# fabio>=0.14.0    # For crystallography image formats
