@@ -594,6 +594,10 @@ class PeakFittingGUI:
         self.fit_results = None
         self.fit_lines = []
 
+        # File navigation
+        self.file_list = []  # List of files in the same folder
+        self.current_file_index = -1  # Current file index in the list
+
         # Background fitting storage
         self.bg_points = []
         self.bg_markers = []
@@ -642,6 +646,27 @@ class PeakFittingGUI:
                                    command=self.load_file, **btn_style)
         self.btn_load.pack(side=tk.LEFT, padx=5, pady=8)
 
+        # File navigation buttons (smaller)
+        nav_btn_style = {
+            'font': ('Arial', 10, 'bold'),
+            'width': 3,
+            'height': 2,
+            'relief': tk.RAISED,
+            'bd': 3
+        }
+
+        self.btn_prev_file = tk.Button(control_frame, text="◀",
+                                        bg='#9370DB', fg='white',
+                                        command=self.prev_file,
+                                        state=tk.DISABLED, **nav_btn_style)
+        self.btn_prev_file.pack(side=tk.LEFT, padx=2, pady=8)
+
+        self.btn_next_file = tk.Button(control_frame, text="▶",
+                                        bg='#9370DB', fg='white',
+                                        command=self.next_file,
+                                        state=tk.DISABLED, **nav_btn_style)
+        self.btn_next_file.pack(side=tk.LEFT, padx=2, pady=8)
+
         self.btn_fit = tk.Button(control_frame, text="Fit Peaks",
                                  bg='#BA55D3', fg='white',
                                  command=self.fit_peaks, state=tk.DISABLED, **btn_style)
@@ -656,6 +681,11 @@ class PeakFittingGUI:
                                   bg='#90EE90', fg='#006400',
                                   command=self.save_results, state=tk.DISABLED, **btn_style)
         self.btn_save.pack(side=tk.LEFT, padx=5, pady=8)
+
+        self.btn_quick_save = tk.Button(control_frame, text="Quick Save",
+                                         bg='#98FB98', fg='#006400',
+                                         command=self.quick_save_results, state=tk.DISABLED, **btn_style)
+        self.btn_quick_save.pack(side=tk.LEFT, padx=5, pady=8)
 
         self.btn_clear_fit = tk.Button(control_frame, text="Clear Fit",
                                        bg='#FF8C00', fg='white',
@@ -912,7 +942,7 @@ class PeakFittingGUI:
             self.coord_label.config(text="")
 
     def load_file(self):
-        """Load XRD data file"""
+        """Load XRD data file via file dialog"""
         filepath = filedialog.askopenfilename(
             title="Select XRD Data File",
             filetypes=[("XY files", "*.xy"), ("DAT files", "*.dat"),
@@ -922,6 +952,34 @@ class PeakFittingGUI:
         if not filepath:
             return
 
+        # Scan folder for all compatible files
+        self._scan_folder(filepath)
+
+        # Load the selected file
+        self.load_file_by_path(filepath)
+
+    def _scan_folder(self, filepath):
+        """Scan folder and build file list for navigation"""
+        folder = os.path.dirname(filepath)
+        all_files = []
+
+        # Collect all compatible files in the folder
+        extensions = ['.xy', '.dat', '.txt']
+        for file in sorted(os.listdir(folder)):
+            if any(file.lower().endswith(ext) for ext in extensions):
+                full_path = os.path.join(folder, file)
+                if os.path.isfile(full_path):
+                    all_files.append(full_path)
+
+        self.file_list = all_files
+        # Find current file index
+        try:
+            self.current_file_index = self.file_list.index(filepath)
+        except ValueError:
+            self.current_file_index = 0
+
+    def load_file_by_path(self, filepath):
+        """Load XRD data file from specific path"""
         try:
             with open(filepath, encoding='latin1') as f:
                 data = np.genfromtxt(f, comments="#")
@@ -961,11 +1019,35 @@ class PeakFittingGUI:
             self.btn_apply_smooth.config(state=tk.NORMAL)
             self.btn_reset_smooth.config(state=tk.NORMAL)
 
-            self.status_label.config(text=f"Loaded: {self.filename}")
+            # Enable navigation buttons if there are multiple files
+            if len(self.file_list) > 1:
+                self.btn_prev_file.config(state=tk.NORMAL)
+                self.btn_next_file.config(state=tk.NORMAL)
+
+            file_info = f"File {self.current_file_index + 1}/{len(self.file_list)}: {self.filename}"
+            self.status_label.config(text=file_info)
             self.update_info(f"File loaded: {self.filename}\nData points: {len(self.x)}\n")
 
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load file:\n{str(e)}")
+
+    def prev_file(self):
+        """Load previous file in the folder"""
+        if len(self.file_list) == 0:
+            return
+
+        self.current_file_index = (self.current_file_index - 1) % len(self.file_list)
+        filepath = self.file_list[self.current_file_index]
+        self.load_file_by_path(filepath)
+
+    def next_file(self):
+        """Load next file in the folder"""
+        if len(self.file_list) == 0:
+            return
+
+        self.current_file_index = (self.current_file_index + 1) % len(self.file_list)
+        filepath = self.file_list[self.current_file_index]
+        self.load_file_by_path(filepath)
 
     def on_click(self, event):
         """Handle mouse clicks - left click adds, right click removes"""
@@ -2009,6 +2091,7 @@ class PeakFittingGUI:
             self.status_label.config(text="Fitting successful!")
 
             self.btn_save.config(state=tk.NORMAL)
+            self.btn_quick_save.config(state=tk.NORMAL)
             self.btn_clear_fit.config(state=tk.NORMAL)
 
         except Exception as e:
@@ -2037,6 +2120,7 @@ class PeakFittingGUI:
         self.canvas.draw()
 
         self.btn_save.config(state=tk.DISABLED)
+        self.btn_quick_save.config(state=tk.DISABLED)
         self.btn_clear_fit.config(state=tk.DISABLED)
         self.update_info("Fit cleared. Peak selections preserved.\n")
         self.status_label.config(text=f"{len(self.selected_peaks)} peak(s) selected")
@@ -2081,10 +2165,11 @@ class PeakFittingGUI:
             self.status_label.config(text="Ready to select peaks")
 
         self.btn_save.config(state=tk.DISABLED)
+        self.btn_quick_save.config(state=tk.DISABLED)
         self.btn_clear_fit.config(state=tk.DISABLED)
 
     def save_results(self):
-        """Save fitting results"""
+        """Save fitting results to user-selected directory"""
         if self.fit_results is None:
             messagebox.showwarning("No Results", "Please fit peaks before saving!")
             return
@@ -2094,21 +2179,47 @@ class PeakFittingGUI:
             return
 
         try:
-            self.fit_results['File'] = self.filename
-            csv_path = os.path.join(save_dir, f"{self.filename}_fit_results.csv")
-            self.fit_results.to_csv(csv_path, index=False)
-
-            fig_path = os.path.join(save_dir, f"{self.filename}_fit_plot.png")
-            self.fig.savefig(fig_path, dpi=300, bbox_inches='tight',
-                           facecolor='white', edgecolor='none')
-
+            self._save_results_to_dir(save_dir)
             messagebox.showinfo("Success",
-                              f"Results saved!\n\nCSV: {csv_path}\nPlot: {fig_path}")
+                              f"Results saved to:\n{save_dir}")
             self.update_info(f"Results saved to: {save_dir}\n")
             self.status_label.config(text="Results saved!")
 
         except Exception as e:
             messagebox.showerror("Save Error", f"Failed to save:\n{str(e)}")
+
+    def quick_save_results(self):
+        """Quickly save fitting results to source file directory"""
+        if self.fit_results is None:
+            messagebox.showwarning("No Results", "Please fit peaks before saving!")
+            return
+
+        if self.filepath is None:
+            messagebox.showwarning("No File", "No source file path available!")
+            return
+
+        try:
+            # Save to the same directory as the source file
+            save_dir = os.path.dirname(self.filepath)
+            self._save_results_to_dir(save_dir)
+
+            self.update_info(f"Quick saved to: {save_dir}\n")
+            self.status_label.config(text="Quick saved!")
+
+        except Exception as e:
+            messagebox.showerror("Save Error", f"Failed to quick save:\n{str(e)}")
+
+    def _save_results_to_dir(self, save_dir):
+        """Internal method to save results to a specific directory"""
+        self.fit_results['File'] = self.filename
+        csv_path = os.path.join(save_dir, f"{self.filename}_fit_results.csv")
+        self.fit_results.to_csv(csv_path, index=False)
+
+        fig_path = os.path.join(save_dir, f"{self.filename}_fit_plot.png")
+        self.fig.savefig(fig_path, dpi=300, bbox_inches='tight',
+                       facecolor='white', edgecolor='none')
+
+        return csv_path, fig_path
 
     def update_info(self, message):
         """Update info text"""
