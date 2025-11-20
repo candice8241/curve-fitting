@@ -983,7 +983,7 @@ class PeakFittingGUI:
         if self.selecting_bg:
             if event.button == 1:  # Left click - add point
                 marker, = self.ax.plot(point_x, point_y, 's', color='#4169E1',
-                                      markersize=8, markeredgecolor='#FFD700',
+                                      markersize=5, markeredgecolor='#FFD700',
                                       markeredgewidth=1.5, zorder=10)
                 # Add text label for the background point
                 text = self.ax.text(point_x, point_y * 0.97, f'BG{len(self.bg_points)+1}',
@@ -1001,15 +1001,57 @@ class PeakFittingGUI:
                 if len(self.bg_points) >= 2:
                     self.btn_subtract_bg.config(state=tk.NORMAL)
 
-            elif event.button == 3:  # Right click - remove nearest point
+            elif event.button == 3:  # Right click - remove nearest point or point on line segment
                 if len(self.bg_points) > 0:
-                    # Find nearest background point
-                    distances = [abs(x_click - p[0]) for p in self.bg_points]
-                    nearest_idx = np.argmin(distances)
+                    # Find nearest background point or point on line segment
+                    # Calculate distance to each background point
+                    point_distances = [abs(x_click - p[0]) for p in self.bg_points]
+                    nearest_point_idx = np.argmin(point_distances)
+                    min_point_dist = point_distances[nearest_point_idx]
+
+                    # Also check distance to line segments
+                    min_segment_dist = float('inf')
+                    nearest_segment_point_idx = None
+
+                    if len(self.bg_points) >= 2:
+                        sorted_points = sorted(enumerate(self.bg_points), key=lambda x: x[1][0])
+                        for i in range(len(sorted_points) - 1):
+                            idx1, (x1, y1) = sorted_points[i]
+                            idx2, (x2, y2) = sorted_points[i + 1]
+
+                            # Check if click is between these two points
+                            if x1 <= x_click <= x2:
+                                # Calculate perpendicular distance to line segment
+                                # Use y-distance as approximation (simpler)
+                                # Interpolate y value on the segment
+                                t = (x_click - x1) / (x2 - x1) if x2 != x1 else 0
+                                y_on_segment = y1 + t * (y2 - y1)
+                                y_dist = abs(point_y - y_on_segment)
+
+                                # Convert y distance to data coordinates for comparison
+                                # Use a threshold in data units
+                                if y_dist < min_segment_dist:
+                                    min_segment_dist = y_dist
+                                    # Choose the nearest endpoint
+                                    dist_to_start = abs(x_click - x1)
+                                    dist_to_end = abs(x_click - x2)
+                                    nearest_segment_point_idx = idx1 if dist_to_start < dist_to_end else idx2
+
+                    # Decide whether to use point or segment detection
+                    # Use segment detection if we're close to a segment
+                    y_range = np.max(self.y) - np.min(self.y)
+                    segment_threshold = y_range * 0.05  # 5% of y range
+
+                    if nearest_segment_point_idx is not None and min_segment_dist < segment_threshold:
+                        # Delete the nearest point on the segment
+                        delete_idx = nearest_segment_point_idx
+                    else:
+                        # Delete the nearest point
+                        delete_idx = nearest_point_idx
 
                     # Remove the point
-                    removed_point = self.bg_points.pop(nearest_idx)
-                    marker_tuple = self.bg_markers.pop(nearest_idx)
+                    removed_point = self.bg_points.pop(delete_idx)
+                    marker_tuple = self.bg_markers.pop(delete_idx)
 
                     # Remove marker and text from plot
                     try:
@@ -1095,7 +1137,7 @@ class PeakFittingGUI:
             # Add each point to the plot with markers and labels
             for point_x, point_y in bg_points:
                 marker, = self.ax.plot(point_x, point_y, 's', color='#4169E1',
-                                      markersize=8, markeredgecolor='#FFD700',
+                                      markersize=5, markeredgecolor='#FFD700',
                                       markeredgewidth=1.5, zorder=10)
                 text = self.ax.text(point_x, point_y * 0.97, f'BG{len(self.bg_points)+1}',
                                    ha='center', fontsize=7, color='#4169E1',
