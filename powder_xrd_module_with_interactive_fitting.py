@@ -24,6 +24,23 @@ from theme_module import GUIBase, CuteSheepProgressBar, ModernTab, ModernButton
 # Import the enhanced peak fitting GUI
 from peak_fitting_gui_enhanced import PeakFittingGUI
 
+# Import icon utility
+try:
+    from icon_utils import set_window_icon
+except ImportError:
+    # Fallback if icon_utils not available
+    def set_window_icon(window, icon_path=None, use_default=True):
+        try:
+            if icon_path and os.path.exists(icon_path):
+                if icon_path.endswith('.ico'):
+                    window.iconbitmap(icon_path)
+                else:
+                    icon_image = tk.PhotoImage(file=icon_path)
+                    window.iconphoto(True, icon_image)
+                    window._icon_image = icon_image
+        except:
+            pass
+
 
 class SpinboxStyleButton(tk.Frame):
     """Spinbox-style button widget matching the reference image"""
@@ -619,14 +636,12 @@ class PowderXRDModule(GUIBase):
         y = (screen_height - window_height) // 2
         self.interactive_fitting_window.geometry(f"{window_width}x{window_height}+{x}+{y}")
 
-        # Set window icon (optional)
-        try:
-            self.interactive_fitting_window.iconbitmap('icon.ico')
-        except:
-            pass
+        # Set window icon using utility function
+        # Tries multiple icon locations and formats
+        set_window_icon(self.interactive_fitting_window, use_default=True)
 
         # Create the peak fitting GUI inside this window
-        fitting_app = PeakFittingGUI(self.interactive_fitting_window)
+        fitting_app = PeakFittingGUI(self.interactive_fitting_window, icon_path=None)
         fitting_app.setup_ui()
 
         # Log the action

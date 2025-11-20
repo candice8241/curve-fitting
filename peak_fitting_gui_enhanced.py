@@ -20,6 +20,23 @@ import os
 import pandas as pd
 import warnings
 
+# Import icon utility
+try:
+    from icon_utils import set_window_icon
+except ImportError:
+    # Fallback if icon_utils not available
+    def set_window_icon(window, icon_path=None, use_default=True):
+        try:
+            if icon_path and os.path.exists(icon_path):
+                if icon_path.endswith('.ico'):
+                    window.iconbitmap(icon_path)
+                else:
+                    icon_image = tk.PhotoImage(file=icon_path)
+                    window.iconphoto(True, icon_image)
+                    window._icon_image = icon_image
+        except:
+            pass
+
 warnings.filterwarnings('ignore', category=UserWarning, module='matplotlib')
 
 
@@ -516,11 +533,14 @@ class PeakDetector:
 class PeakFittingGUI:
     """Main GUI Application for Peak Fitting"""
 
-    def __init__(self, master):
+    def __init__(self, master, icon_path=None):
         self.master = master
         self.master.title("Interactive XRD Peak Fitting Tool - Enhanced")
         self.master.geometry("1400x850")
         self.master.configure(bg='#F0E6FA')
+
+        # Set window icon
+        set_window_icon(self.master, icon_path=icon_path, use_default=True)
 
         # Data storage
         self.x = None
@@ -1954,10 +1974,17 @@ class PeakFittingGUI:
 
 
 # ==================== Main Entry Point ====================
-def main():
-    """Main entry point for the application"""
+def main(icon_path=None):
+    """
+    Main entry point for the application
+
+    Parameters:
+    -----------
+    icon_path : str, optional
+        Path to custom icon file (.ico, .png, .gif)
+    """
     root = tk.Tk()
-    app = PeakFittingGUI(root)
+    app = PeakFittingGUI(root, icon_path=icon_path)
     root.mainloop()
 
 
