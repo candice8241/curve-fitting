@@ -166,7 +166,7 @@ def cluster_peaks_dbscan(peak_positions, eps=None, min_samples=1):
 
 
 # ---------- Global background fitting ----------
-def fit_global_background(x, y, peak_indices, method='spline', smoothing_factor=None):
+def fit_global_background(x, y, peak_indices, method='spline', smoothing_factor=None, poly_order=3):
     """
     Fit a global smooth background to the data, excluding peak regions.
 
@@ -179,9 +179,14 @@ def fit_global_background(x, y, peak_indices, method='spline', smoothing_factor=
     peak_indices : list
         Indices of detected peaks
     method : str
-        'spline' for smooth spline, 'piecewise' for piecewise linear
+        'spline' for smooth spline, 'piecewise' for piecewise linear,
+        'polynomial' for polynomial fit (smoothest, bounded curvature)
     smoothing_factor : float, optional
         Smoothing factor for spline (larger = smoother)
+    poly_order : int, optional
+        Order of polynomial for 'polynomial' method (default: 3)
+        Order 2 = parabola (constant 2nd derivative)
+        Order 3 = cubic (linear 2nd derivative)
 
     Returns:
     --------
@@ -254,11 +259,39 @@ def fit_global_background(x, y, peak_indices, method='spline', smoothing_factor=
     if len(bg_x) < 2:
         return np.full_like(y, np.mean(bg_y) if len(bg_y) > 0 else np.median(y)), bg_points
 
-    if method == 'spline' and len(bg_x) >= 4:
+    if method == 'polynomial':
+        # Polynomial fit with bounded curvature
+        # This ensures smooth background with controlled 2nd derivative
+        try:
+            # Fit polynomial to anchor points
+            # poly_order: 2 = parabola (constant 2nd derivative = const curvature)
+            #            3 = cubic (linear 2nd derivative)
+            #            4+ = higher order (flexible but still smooth)
+
+            # Ensure poly_order is not too high for number of points
+            max_order = min(poly_order, len(bg_x) - 1, 5)  # Cap at 5th order
+
+            # Fit polynomial
+            coeffs = np.polyfit(bg_x, bg_y, max_order)
+            poly = np.poly1d(coeffs)
+            background = poly(x)
+
+            # Ensure background doesn't go above maximum data value
+            background = np.clip(background, None, np.max(y))
+
+            # For 2nd order polynomial, the 2nd derivative is constant (2*a2)
+            # For 3rd order, 2nd derivative is linear: 2*a2 + 6*a3*x
+            # This ensures bounded curvature
+
+        except Exception:
+            # Fallback to linear interpolation
+            background = np.interp(x, bg_x, bg_y)
+
+    elif method == 'spline' and len(bg_x) >= 4:
         # Smooth spline interpolation
         if smoothing_factor is None:
-            # Auto-determine smoothing factor
-            smoothing_factor = len(bg_x) * 0.5
+            # Auto-determine smoothing factor for smooth curvature
+            smoothing_factor = len(bg_x) * 1.0  # Increased for smoother background
 
         try:
             spline = UnivariateSpline(bg_x, bg_y, s=smoothing_factor, k=3)
@@ -269,7 +302,7 @@ def fit_global_background(x, y, peak_indices, method='spline', smoothing_factor=
             # Fallback to linear interpolation
             background = np.interp(x, bg_x, bg_y)
     else:
-        # Piecewise linear interpolation
+        # Piecewise linear interpolation (least smooth)
         background = np.interp(x, bg_x, bg_y)
 
     return background, bg_points
@@ -1339,14 +1372,30 @@ class PeakFittingGUI:
 
             # Step 1: Fit global background first
             self.update_info("Fitting global background...\n")
+            # Use polynomial fit for smooth background with bounded 2nd derivative
+            # polynomial: 2nd derivative is bounded (constant for order 2, linear for order 3)
+            # spline: uses smoothing factor to control curvature
+            # piecewise: linear segments (no curvature control)
+            if len(sorted_peaks) >= 4:
+                bg_method = 'polynomial'  # Polynomial for smooth background
+                poly_order = 3  # Cubic polynomial (linear 2nd derivative)
+            elif len(sorted_peaks) >= 2:
+                bg_method = 'polynomial'  # Use parabola for 2-3 peaks
+                poly_order = 2  # Parabola (constant 2nd derivative)
+            else:
+                bg_method = 'piecewise'  # Single peak, use simple linear
+                poly_order = 3
+
             global_bg, global_bg_points = fit_global_background(
                 self.x, self.y, sorted_peaks,
-                method='spline' if len(sorted_peaks) >= 3 else 'piecewise'
+                method=bg_method,
+                poly_order=poly_order
             )
 
             # Subtract global background
             y_nobg = self.y - global_bg
-            self.update_info(f"Global background fitted with {len(global_bg_points)} anchor points\n")
+            self.update_info(f"Global background fitted ({bg_method}, order={poly_order if bg_method=='polynomial' else 'N/A'}) "
+                           f"with {len(global_bg_points)} anchor points\n")
 
             # Step 2: Estimate FWHM for each peak (using background-subtracted data)
             fwhm_estimates = []
