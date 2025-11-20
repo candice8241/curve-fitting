@@ -1372,30 +1372,19 @@ class PeakFittingGUI:
 
             # Step 1: Fit global background first
             self.update_info("Fitting global background...\n")
-            # Use polynomial fit for smooth background with bounded 2nd derivative
-            # polynomial: 2nd derivative is bounded (constant for order 2, linear for order 3)
-            # spline: uses smoothing factor to control curvature
-            # piecewise: linear segments (no curvature control)
-            if len(sorted_peaks) >= 4:
-                bg_method = 'polynomial'  # Polynomial for smooth background
-                poly_order = 3  # Cubic polynomial (linear 2nd derivative)
-            elif len(sorted_peaks) >= 2:
-                bg_method = 'polynomial'  # Use parabola for 2-3 peaks
-                poly_order = 2  # Parabola (constant 2nd derivative)
-            else:
-                bg_method = 'piecewise'  # Single peak, use simple linear
-                poly_order = 3
+            # Use piecewise linear background (adjacent anchor points connected)
+            # This provides maximum flexibility to follow local baseline variations
+            bg_method = 'piecewise'
 
             global_bg, global_bg_points = fit_global_background(
                 self.x, self.y, sorted_peaks,
-                method=bg_method,
-                poly_order=poly_order
+                method=bg_method
             )
 
             # Subtract global background
             y_nobg = self.y - global_bg
-            self.update_info(f"Global background fitted ({bg_method}, order={poly_order if bg_method=='polynomial' else 'N/A'}) "
-                           f"with {len(global_bg_points)} anchor points\n")
+            self.update_info(f"Piecewise linear background fitted "
+                           f"with {len(global_bg_points)} anchor points (adjacent points connected)\n")
 
             # Step 2: Estimate FWHM for each peak (using background-subtracted data)
             fwhm_estimates = []
