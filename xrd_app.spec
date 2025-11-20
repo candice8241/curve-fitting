@@ -14,7 +14,7 @@ added_files = [
 
 a = Analysis(
     ['main.py'],
-    pathex=[],  # Add your project path here if needed, e.g., ['D:/your/project/path']
+    pathex=[r'D:\HEPS\ID31\dioptas_data\github_felicity\batch\HP_full_package'],
     binaries=[],
     datas=added_files,
     hiddenimports=[
@@ -146,6 +146,7 @@ a = Analysis(
         # Math and fitting
         'sympy',           # Symbolic mathematics
         'statsmodels',     # Statistical models
+        'sklearn',         # Machine learning (scikit-learn)
     ],
     hookspath=[],
     runtime_hooks=[],
