@@ -56,22 +56,10 @@ if errorlevel 1 (
 )
 echo.
 
-REM 检查 pyFAI 是否安装
-echo [3/6] 检查 pyFAI...
-pip show pyFAI >nul 2>&1
-if errorlevel 1 (
-    echo [警告] pyFAI 未安装
-    echo 您的代码使用了 pyFAI，建议安装：
-    echo   pip install pyFAI
-    echo.
-    echo 是否继续打包？ (Y/N)
-    set /p continue=
-    if /i not "%continue%"=="Y" (
-        exit /b 0
-    )
-) else (
-    echo pyFAI 已安装
-)
+REM 跳过 pyFAI 检查（使用 --collect-all 会自动处理）
+echo [3/6] 跳过 pyFAI 检查...
+echo 注意: 使用 --collect-all pyFAI 选项会自动收集 pyFAI
+echo 如果 pyFAI 未安装，打包时会自动跳过
 echo.
 
 REM 清理之前的构建文件
