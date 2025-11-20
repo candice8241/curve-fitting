@@ -8,6 +8,31 @@ echo XRD应用程序打包工具
 echo ========================================
 echo.
 
+REM 获取脚本所在目录并切换到该目录
+cd /d "%~dp0"
+echo 当前工作目录: %CD%
+echo.
+
+REM 检查关键文件是否存在
+if not exist "xrd_app.spec" (
+    echo [错误] 找不到 xrd_app.spec 文件！
+    echo 请确保在项目根目录运行此脚本。
+    echo 当前目录: %CD%
+    dir /b *.spec
+    pause
+    exit /b 1
+)
+
+if not exist "main.py" (
+    echo [错误] 找不到 main.py 文件！
+    echo 请确保在项目根目录运行此脚本。
+    pause
+    exit /b 1
+)
+
+echo [检查] 找到 xrd_app.spec 和 main.py 文件
+echo.
+
 REM 检查Python是否安装
 python --version >nul 2>&1
 if errorlevel 1 (
