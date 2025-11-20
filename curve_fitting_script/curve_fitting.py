@@ -1073,8 +1073,13 @@ class PeakFittingGUI:
                         self.btn_subtract_bg.config(state=tk.DISABLED)
         elif not self.fitted:
             if event.button == 1:  # Left click - add peak
-                # Search for local maximum near the click position
-                search_window = 20  # Number of points to search on each side
+                # Improved peak detection for shoulder peaks
+                # Use a smaller, adaptive search window
+
+                # Estimate local noise level to determine search window
+                window_estimate = min(10, len(self.y) // 20)  # Smaller window
+                search_window = max(5, window_estimate)  # At least 5 points
+
                 left_idx = max(0, idx - search_window)
                 right_idx = min(len(self.y), idx + search_window + 1)
 
@@ -1083,9 +1088,23 @@ class PeakFittingGUI:
                 local_max_idx = np.argmax(local_y)
                 peak_idx = left_idx + local_max_idx
 
-                # Use the local maximum position
-                peak_x = self.x[peak_idx]
-                peak_y = self.y[peak_idx]
+                # Additional check: if the found peak is too far from click position,
+                # use the click position itself (for shoulder peaks very close to main peaks)
+                dx = np.mean(np.diff(self.x))
+                distance_to_click = abs(self.x[peak_idx] - x_click)
+                max_allowed_distance = dx * search_window * 0.7  # 70% of search window
+
+                if distance_to_click > max_allowed_distance:
+                    # Click position is likely intentional (shoulder peak), use it directly
+                    peak_idx = idx
+                    peak_x = point_x
+                    peak_y = point_y
+                    adjustment_note = "(using click position)"
+                else:
+                    # Use the auto-detected maximum
+                    peak_x = self.x[peak_idx]
+                    peak_y = self.y[peak_idx]
+                    adjustment_note = "(auto-adjusted to local max)" if peak_idx != idx else ""
 
                 marker, = self.ax.plot(peak_x, peak_y, '*', color='#FF1493',
                                       markersize=15, markeredgecolor='#FFD700',
@@ -1101,7 +1120,7 @@ class PeakFittingGUI:
 
                 self.undo_stack.append(('peak', len(self.selected_peaks) - 1))
                 self.btn_undo.config(state=tk.NORMAL)
-                self.update_info(f"Peak {len(self.selected_peaks)} at 2theta = {peak_x:.4f} (auto-adjusted to local max)\n")
+                self.update_info(f"Peak {len(self.selected_peaks)} at 2theta = {peak_x:.4f} {adjustment_note}\n")
                 self.status_label.config(text=f"{len(self.selected_peaks)} peak(s) selected")
 
             elif event.button == 3:  # Right click - remove nearest peak
