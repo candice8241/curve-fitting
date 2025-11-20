@@ -4,6 +4,74 @@
 
 ---
 
+## ❌ 错误：TypeError: unhashable type: 'dict'
+
+### 错误信息
+```
+TypeError: unhashable type: 'dict'
+```
+
+### 原因分析
+这是 PyInstaller 配置文件中的兼容性问题，通常由以下原因造成：
+
+1. **spec 文件中使用了 `hooksconfig={}` 参数**（在某些 PyInstaller 版本中不兼容）
+2. PyInstaller 版本与配置语法不匹配
+
+### 解决方案
+
+#### ✅ 已修复！
+最新版本的 `xrd_app.spec` 文件已经修复了这个问题。请执行以下操作：
+
+**方案1：拉取最新代码（推荐）**
+
+```bash
+# 拉取修复后的代码
+git pull origin claude/package-gui-exe-012umeduw8bYoxoZDCX6Ukx4
+
+# 重新打包
+build.bat  # Windows
+./build.sh # Linux/Mac
+```
+
+**方案2：手动修复（如果无法拉取代码）**
+
+编辑 `xrd_app.spec` 文件：
+
+1. 在文件顶部添加：
+```python
+import os
+```
+
+2. 删除 `hooksconfig={}` 这一行：
+```python
+a = Analysis(
+    ...
+    hookspath=[],
+    # hooksconfig={},  ← 删除或注释掉这一行
+    runtime_hooks=[],
+    ...
+)
+```
+
+3. 修改图标路径部分（使其成为可选）：
+```python
+# 在 exe = EXE(...) 之前添加
+icon_path = 'resources/app_icon.ico' if os.path.exists('resources/app_icon.ico') else None
+
+exe = EXE(
+    ...
+    icon=icon_path,  # 使用变量而不是直接写路径
+    ...
+)
+```
+
+4. 保存文件并重新打包：
+```bash
+pyinstaller --clean xrd_app.spec
+```
+
+---
+
 ## ❌ 错误：找不到 xrd_app.spec 文件
 
 ### 错误信息

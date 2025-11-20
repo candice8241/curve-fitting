@@ -3,6 +3,8 @@
 PyInstaller spec file for XRD Data Post-Processing application
 """
 
+import os
+
 block_cipher = None
 
 # List of additional data files to include
@@ -31,7 +33,6 @@ a = Analysis(
         'pandas',
     ],
     hookspath=[],
-    hooksconfig={},
     runtime_hooks=[],
     excludes=[],
     win_no_prefer_redirects=False,
@@ -41,6 +42,9 @@ a = Analysis(
 )
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+
+# Check if icon file exists
+icon_path = 'resources/app_icon.ico' if os.path.exists('resources/app_icon.ico') else None
 
 exe = EXE(
     pyz,
@@ -58,7 +62,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='resources/app_icon.ico',  # Application icon
+    icon=icon_path,  # Application icon (optional)
 )
 
 coll = COLLECT(
