@@ -172,6 +172,96 @@ build.bat
 
 ---
 
+## ❌ 错误：cannot import name 'splitPixelFullCSC' from 'pyFAI.integrator.load_engines'
+
+### 错误信息
+```
+ImportError: cannot import name 'splitPixelFullCSC' from 'pyFAI.integrator.load_engines'
+或类似的 pyFAI 内部模块导入错误
+```
+
+### 原因分析
+这是 pyFAI 库的内部模块和 Cython 扩展没有被 PyInstaller 正确检测到。pyFAI 包含很多编译的 Cython 扩展模块，需要手动指定。
+
+### 解决方案
+
+#### ✅ 已修复！
+最新版本的 `xrd_app.spec` 已经添加了所有 pyFAI 子模块。
+
+**拉取最新代码：**
+
+```bash
+# 拉取修复后的代码
+git pull origin claude/package-gui-exe-012umeduw8bYoxoZDCX6Ukx4
+
+# 清理旧的构建文件
+rmdir /s /q build dist  # Windows
+rm -rf build dist       # Linux/Mac
+
+# 重新打包
+build.bat  # Windows
+./build.sh # Linux/Mac
+```
+
+#### 如果仍然遇到问题
+
+如果拉取最新代码后仍有问题，可以尝试以下方法：
+
+**方法1：使用 `--collect-all` 选项**
+
+```bash
+# 让 PyInstaller 自动收集所有 pyFAI 模块
+pyinstaller --clean --collect-all pyFAI xrd_app.spec
+```
+
+**方法2：手动添加 pyFAI 数据文件**
+
+编辑 `xrd_app.spec`，在 `added_files` 中添加 pyFAI 数据：
+
+```python
+import pyFAI
+import os
+
+pyFAI_path = os.path.dirname(pyFAI.__file__)
+
+added_files = [
+    ('resources', 'resources'),
+    (os.path.join(pyFAI_path, 'calibration'), 'pyFAI/calibration'),
+    (os.path.join(pyFAI_path, 'gui'), 'pyFAI/gui'),
+]
+```
+
+**方法3：检查 pyFAI 版本**
+
+某些版本的 pyFAI 可能有不同的模块结构：
+
+```bash
+# 检查当前版本
+pip show pyFAI
+
+# 如果版本太新或太旧，尝试安装特定版本
+pip install pyFAI==0.21.3
+
+# 然后重新打包
+build.bat
+```
+
+**方法4：测试时临时禁用 pyFAI（仅用于测试打包）**
+
+如果只是想先测试打包功能是否正常，可以临时注释掉 pyFAI：
+
+编辑 `xrd_app.spec`，注释掉所有 pyFAI 相关的 hiddenimports：
+
+```python
+# 'pyFAI',
+# 'pyFAI.azimuthalIntegrator',
+# ...（注释掉所有 pyFAI 相关行）
+```
+
+然后使用示例模块测试打包。等打包流程验证成功后，再恢复 pyFAI 并解决具体问题。
+
+---
+
 ## ❌ 错误：找不到 xrd_app.spec 文件
 
 ### 错误信息
