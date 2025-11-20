@@ -1631,19 +1631,36 @@ class PeakFittingGUI:
 
             # Step 1: Fit global background first
             self.update_info("Fitting global background...\n")
-            # Use piecewise linear background (adjacent anchor points connected)
-            # This provides maximum flexibility to follow local baseline variations
-            bg_method = 'piecewise'
 
-            global_bg, global_bg_points = fit_global_background(
-                self.x, self.y, sorted_peaks,
-                method=bg_method
-            )
+            # Check if user has manually selected background points
+            if len(self.bg_points) >= 2:
+                # Use manually selected background points (priority)
+                self.update_info("Using manually selected background points...\n")
+                sorted_bg_points = sorted(self.bg_points, key=lambda p: p[0])
+                bg_x = np.array([p[0] for p in sorted_bg_points])
+                bg_y = np.array([p[1] for p in sorted_bg_points])
+
+                # Interpolate to get background at all x positions
+                global_bg = np.interp(self.x, bg_x, bg_y)
+                global_bg_points = sorted_bg_points
+
+                self.update_info(f"Using {len(global_bg_points)} manually selected background points\n")
+            else:
+                # Auto-generate background if no manual selection
+                self.update_info("Auto-generating background from peak positions...\n")
+                # Use piecewise linear background (adjacent anchor points connected)
+                bg_method = 'piecewise'
+
+                global_bg, global_bg_points = fit_global_background(
+                    self.x, self.y, sorted_peaks,
+                    method=bg_method
+                )
+
+                self.update_info(f"Piecewise linear background fitted "
+                               f"with {len(global_bg_points)} anchor points (adjacent points connected)\n")
 
             # Subtract global background
             y_nobg = self.y - global_bg
-            self.update_info(f"Piecewise linear background fitted "
-                           f"with {len(global_bg_points)} anchor points (adjacent points connected)\n")
 
             # Step 2: Estimate FWHM for each peak (using background-subtracted data)
             fwhm_estimates = []
@@ -1850,6 +1867,14 @@ class PeakFittingGUI:
             # Step 5: Plot results
             colors = plt.cm.tab10(np.linspace(0, 1, len(sorted_peaks)))
 
+            # Clear manual background connecting line if it exists (to avoid duplication)
+            if self.bg_connect_line is not None:
+                try:
+                    self.bg_connect_line.remove()
+                except:
+                    pass
+                self.bg_connect_line = None
+
             # Plot global background
             if len(global_bg_points) >= 2:
                 bg_x = [p[0] for p in global_bg_points]
@@ -1858,10 +1883,11 @@ class PeakFittingGUI:
                 bg_markers, = self.ax.plot(bg_x, bg_y, 'o', color='#4169E1',
                                           markersize=6, alpha=0.8, zorder=3)
                 self.fit_lines.append(bg_markers)
-                # Plot smooth background line
+                # Plot smooth background line with appropriate label
+                bg_label = 'Manual Background' if len(self.bg_points) >= 2 else 'Auto Background'
                 bg_line, = self.ax.plot(self.x, global_bg, '-', color='#4169E1',
                                        linewidth=1.5, alpha=0.6,
-                                       label='Global Background', zorder=3)
+                                       label=bg_label, zorder=3)
                 self.fit_lines.append(bg_line)
 
             # Plot total fit for each group
