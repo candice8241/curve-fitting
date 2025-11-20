@@ -5,7 +5,7 @@
 """
 
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox
 
 
 class PowderXRDModule:
@@ -89,8 +89,8 @@ class PowderXRDModule:
 
     def _import_data(self):
         """导入数据（示例）"""
-        tk.messagebox.showinfo("导入数据", "此功能需要实现。\n请添加文件选择对话框和数据导入逻辑。")
+        messagebox.showinfo("导入数据", "此功能需要实现。\n请添加文件选择对话框和数据导入逻辑。")
 
     def _process_data(self):
         """处理数据（示例）"""
-        tk.messagebox.showinfo("处理数据", "此功能需要实现。\n请添加数据处理逻辑。")
+        messagebox.showinfo("处理数据", "此功能需要实现。\n请添加数据处理逻辑。")

@@ -72,6 +72,113 @@ pyinstaller --clean xrd_app.spec
 
 ---
 
+## ❌ 错误：ModuleNotFoundError: No module named 'matplotlib' (或其他科学库)
+
+### 错误信息
+```
+ModuleNotFoundError: No module named 'matplotlib'
+ModuleNotFoundError: No module named 'numpy'
+ModuleNotFoundError: No module named 'scipy'
+```
+
+### 原因分析
+这些是可选的科学计算库。如果您的代码中实际使用了这些库，需要安装它们。但如果只是测试打包功能，可以跳过这些库。
+
+### 解决方案
+
+#### 方案1：使用示例模块测试打包（推荐用于快速测试）✨
+
+示例模块**不依赖**科学计算库，可以快速测试打包功能：
+
+```bash
+# 1. 安装最小依赖（只需要 PyInstaller）
+pip install pyinstaller
+
+# 2. 复制示例模块到项目根目录
+# Windows:
+copy example_modules\*.py .
+
+# Linux/Mac:
+cp example_modules/*.py .
+
+# 3. 运行打包（spec 文件已配置为不需要这些库）
+build.bat  # Windows
+./build.sh # Linux/Mac
+```
+
+最新的 `xrd_app.spec` 已经将这些库注释掉，不会尝试导入它们。
+
+#### 方案2：安装完整依赖（用于完整功能）
+
+如果您的实际模块需要这些库：
+
+```bash
+# 安装所有科学计算依赖
+pip install -r requirements_gui.txt
+
+# 这将安装：
+# - numpy
+# - scipy
+# - pandas
+# - matplotlib
+# - Pillow
+# - pyinstaller
+```
+
+然后在 `xrd_app.spec` 中取消注释需要的库：
+
+```python
+hiddenimports=[
+    'tkinter',
+    'tkinter.ttk',
+    'tkinter.font',
+    'theme_module',
+    'powder_module',
+    'radial_module',
+    'single_crystal_module',
+    'numpy',        # 取消注释
+    'scipy',        # 取消注释
+    'matplotlib',   # 取消注释
+    'PIL',          # 取消注释
+    'pandas',       # 取消注释
+],
+```
+
+#### 方案3：选择性安装需要的库
+
+只安装您实际使用的库：
+
+```bash
+# 只安装 numpy
+pip install numpy
+
+# 或只安装 matplotlib
+pip install matplotlib
+
+# 然后在 xrd_app.spec 中只取消注释对应的库
+```
+
+### 快速测试流程
+
+如果您只想快速测试打包是否正常工作：
+
+```bash
+# 1. 只安装 PyInstaller
+pip install pyinstaller
+
+# 2. 使用示例模块
+copy example_modules\*.py .
+
+# 3. 确认 xrd_app.spec 中科学库已注释（最新版本已注释）
+
+# 4. 打包
+build.bat
+```
+
+这样可以在 30 秒内完成测试打包！
+
+---
+
 ## ❌ 错误：找不到 xrd_app.spec 文件
 
 ### 错误信息

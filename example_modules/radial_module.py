@@ -5,6 +5,7 @@
 """
 
 import tkinter as tk
+from tkinter import messagebox
 
 
 class AzimuthalIntegrationModule:
@@ -88,8 +89,8 @@ class AzimuthalIntegrationModule:
 
     def _load_image(self):
         """加载图像（示例）"""
-        tk.messagebox.showinfo("加载图像", "此功能需要实现。\n请添加图像加载逻辑。")
+        messagebox.showinfo("加载图像", "此功能需要实现。\n请添加图像加载逻辑。")
 
     def _integrate(self):
         """执行积分（示例）"""
-        tk.messagebox.showinfo("执行积分", "此功能需要实现。\n请添加积分计算逻辑。")
+        messagebox.showinfo("执行积分", "此功能需要实现。\n请添加积分计算逻辑。")

@@ -5,6 +5,7 @@
 """
 
 import tkinter as tk
+from tkinter import messagebox
 
 
 class SingleCrystalModule:
@@ -88,8 +89,8 @@ class SingleCrystalModule:
 
     def _load_data(self):
         """加载数据（示例）"""
-        tk.messagebox.showinfo("加载数据", "此功能需要实现。\n请添加数据加载逻辑。")
+        messagebox.showinfo("加载数据", "此功能需要实现。\n请添加数据加载逻辑。")
 
     def _analyze_structure(self):
         """分析结构（示例）"""
-        tk.messagebox.showinfo("分析结构", "此功能需要实现。\n请添加结构分析逻辑。")
+        messagebox.showinfo("分析结构", "此功能需要实现。\n请添加结构分析逻辑。")
