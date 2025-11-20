@@ -308,6 +308,73 @@ def fit_global_background(x, y, peak_indices, method='spline', smoothing_factor=
     return background, bg_points
 
 
+def find_background_points_auto(x, y, n_points=10, window_size=50):
+    """
+    Automatically find background anchor points across the data range.
+
+    Parameters:
+    -----------
+    x : array
+        X data
+    y : array
+        Y data
+    n_points : int
+        Target number of background points to find
+    window_size : int
+        Size of local window for finding minima
+
+    Returns:
+    --------
+    bg_points : list of tuples
+        List of (x, y) coordinates for background points
+    """
+    if len(x) < 2:
+        return []
+
+    # Divide the x range into segments
+    x_min, x_max = x.min(), x.max()
+    x_range = x_max - x_min
+
+    # Calculate segment boundaries
+    segment_boundaries = np.linspace(x_min, x_max, n_points + 1)
+
+    bg_points = []
+
+    for i in range(n_points):
+        seg_start = segment_boundaries[i]
+        seg_end = segment_boundaries[i + 1]
+
+        # Find indices in this segment
+        mask = (x >= seg_start) & (x <= seg_end)
+        indices = np.where(mask)[0]
+
+        if len(indices) == 0:
+            continue
+
+        # Find local minimum in this segment
+        seg_y = y[indices]
+
+        # Use a smaller local window to find the true minimum
+        local_window = min(window_size, len(seg_y) // 2)
+
+        if local_window >= 3:
+            # Smooth to avoid noise
+            try:
+                seg_y_smooth = savgol_filter(seg_y, min(local_window, len(seg_y)//2*2+1), 2)
+            except:
+                seg_y_smooth = seg_y
+        else:
+            seg_y_smooth = seg_y
+
+        # Find minimum
+        min_local_idx = np.argmin(seg_y_smooth)
+        global_idx = indices[min_local_idx]
+
+        bg_points.append((x[global_idx], y[global_idx]))
+
+    return bg_points
+
+
 # ---------- Peak profile functions ----------
 def pseudo_voigt(x, amplitude, center, sigma, gamma, eta):
     """Pseudo-Voigt: eta*Lorentzian + (1-eta)*Gaussian"""
@@ -652,6 +719,12 @@ class PeakFittingGUI:
                                       state=tk.DISABLED, **btn_bg_style)
         self.btn_clear_bg.pack(side=tk.LEFT, padx=5, pady=8)
 
+        self.btn_auto_bg = tk.Button(bg_frame, text="Auto Select BG",
+                                     bg='#87CEEB', fg='#00008B',
+                                     command=self.auto_select_background,
+                                     state=tk.DISABLED, **btn_bg_style)
+        self.btn_auto_bg.pack(side=tk.LEFT, padx=5, pady=8)
+
         tk.Label(bg_frame, text="Fit Method:",
                 bg='#E6D5F5', fg='#4B0082',
                 font=('Arial', 9, 'bold')).pack(side=tk.LEFT, padx=(20, 5), pady=10)
@@ -882,6 +955,7 @@ class PeakFittingGUI:
             self.btn_reset.config(state=tk.NORMAL)
             self.btn_select_bg.config(state=tk.NORMAL)
             self.btn_clear_bg.config(state=tk.NORMAL)
+            self.btn_auto_bg.config(state=tk.NORMAL)
             self.btn_auto_find.config(state=tk.NORMAL)
             self.btn_overlap_mode.config(state=tk.NORMAL)
             self.btn_apply_smooth.config(state=tk.NORMAL)
@@ -894,7 +968,7 @@ class PeakFittingGUI:
             messagebox.showerror("Error", f"Failed to load file:\n{str(e)}")
 
     def on_click(self, event):
-        """Handle mouse clicks"""
+        """Handle mouse clicks - left click adds, right click removes"""
         if event.inaxes != self.ax or self.x is None:
             return
 
@@ -907,20 +981,54 @@ class PeakFittingGUI:
         point_y = self.y[idx]
 
         if self.selecting_bg:
-            marker, = self.ax.plot(point_x, point_y, 's', color='#4169E1',
-                                  markersize=6, markeredgecolor='#FFD700',
-                                  markeredgewidth=1, zorder=10)
-            self.bg_points.append((point_x, point_y))
-            self.bg_markers.append(marker)
-            self.update_bg_connect_line()
-            self.canvas.draw()
+            if event.button == 1:  # Left click - add point
+                marker, = self.ax.plot(point_x, point_y, 's', color='#4169E1',
+                                      markersize=8, markeredgecolor='#FFD700',
+                                      markeredgewidth=1.5, zorder=10)
+                # Add text label for the background point
+                text = self.ax.text(point_x, point_y * 0.97, f'BG{len(self.bg_points)+1}',
+                                   ha='center', fontsize=7, color='#4169E1',
+                                   fontweight='bold', zorder=11)
+                self.bg_points.append((point_x, point_y))
+                self.bg_markers.append((marker, text))
+                self.update_bg_connect_line()
+                self.canvas.draw()
 
-            self.undo_stack.append(('bg_point', len(self.bg_points) - 1))
-            self.btn_undo.config(state=tk.NORMAL)
-            self.update_info(f"BG point {len(self.bg_points)} at 2theta = {point_x:.4f}\n")
+                self.undo_stack.append(('bg_point', len(self.bg_points) - 1))
+                self.btn_undo.config(state=tk.NORMAL)
+                self.update_info(f"BG point {len(self.bg_points)} added at 2theta = {point_x:.4f}\n")
 
-            if len(self.bg_points) >= 2:
-                self.btn_subtract_bg.config(state=tk.NORMAL)
+                if len(self.bg_points) >= 2:
+                    self.btn_subtract_bg.config(state=tk.NORMAL)
+
+            elif event.button == 3:  # Right click - remove nearest point
+                if len(self.bg_points) > 0:
+                    # Find nearest background point
+                    distances = [abs(x_click - p[0]) for p in self.bg_points]
+                    nearest_idx = np.argmin(distances)
+
+                    # Remove the point
+                    removed_point = self.bg_points.pop(nearest_idx)
+                    marker_tuple = self.bg_markers.pop(nearest_idx)
+
+                    # Remove marker and text from plot
+                    try:
+                        marker_tuple[0].remove()  # marker
+                        marker_tuple[1].remove()  # text
+                    except:
+                        pass
+
+                    # Update labels for remaining points
+                    for i, (marker, text) in enumerate(self.bg_markers):
+                        text.set_text(f'BG{i+1}')
+
+                    self.update_bg_connect_line()
+                    self.canvas.draw()
+
+                    self.update_info(f"BG point removed at 2theta = {removed_point[0]:.4f}\n")
+
+                    if len(self.bg_points) < 2:
+                        self.btn_subtract_bg.config(state=tk.DISABLED)
         elif not self.fitted:
             marker, = self.ax.plot(point_x, point_y, '*', color='#FF1493',
                                   markersize=15, markeredgecolor='#FFD700',
@@ -965,6 +1073,50 @@ class PeakFittingGUI:
             self.bg_connect_line, = self.ax.plot(bg_x, bg_y, '-', color='#4169E1',
                                                  linewidth=1.5, alpha=0.7, zorder=8)
 
+    def auto_select_background(self):
+        """Automatically select background points across the data range"""
+        if self.x is None or self.y is None:
+            messagebox.showwarning("No Data", "Please load a file first!")
+            return
+
+        try:
+            # Clear existing background points
+            self.clear_background()
+
+            # Find background points automatically
+            n_points = 10  # Number of background anchor points
+            bg_points = find_background_points_auto(self.x, self.y, n_points=n_points)
+
+            if len(bg_points) == 0:
+                messagebox.showwarning("Auto Selection Failed",
+                                      "Could not automatically find background points.")
+                return
+
+            # Add each point to the plot with markers and labels
+            for point_x, point_y in bg_points:
+                marker, = self.ax.plot(point_x, point_y, 's', color='#4169E1',
+                                      markersize=8, markeredgecolor='#FFD700',
+                                      markeredgewidth=1.5, zorder=10)
+                text = self.ax.text(point_x, point_y * 0.97, f'BG{len(self.bg_points)+1}',
+                                   ha='center', fontsize=7, color='#4169E1',
+                                   fontweight='bold', zorder=11)
+                self.bg_points.append((point_x, point_y))
+                self.bg_markers.append((marker, text))
+
+            # Update background connecting line
+            self.update_bg_connect_line()
+            self.canvas.draw()
+
+            # Enable subtract button if we have enough points
+            if len(self.bg_points) >= 2:
+                self.btn_subtract_bg.config(state=tk.NORMAL)
+
+            self.update_info(f"Auto-selected {len(bg_points)} background points\n")
+            self.status_label.config(text=f"{len(bg_points)} BG points auto-selected")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Auto background selection failed:\n{str(e)}")
+
     def undo_action(self):
         """Undo last action"""
         if not self.undo_stack:
@@ -988,9 +1140,10 @@ class PeakFittingGUI:
         elif action_type == 'bg_point':
             if self.bg_points and index == len(self.bg_points) - 1:
                 self.bg_points.pop()
-                marker = self.bg_markers.pop()
+                marker_tuple = self.bg_markers.pop()
                 try:
-                    marker.remove()
+                    marker_tuple[0].remove()  # Remove marker
+                    marker_tuple[1].remove()  # Remove text
                 except:
                     pass
                 self.update_bg_connect_line()
@@ -1053,9 +1206,10 @@ class PeakFittingGUI:
 
     def clear_background(self):
         """Clear background selection"""
-        for marker in self.bg_markers:
+        for marker_tuple in self.bg_markers:
             try:
-                marker.remove()
+                marker_tuple[0].remove()  # Remove marker
+                marker_tuple[1].remove()  # Remove text
             except:
                 pass
 
