@@ -110,39 +110,32 @@ build.bat  # Windows
 
 #### 方案2：安装完整依赖（用于完整功能）
 
-如果您的实际模块需要这些库：
+如果您的实际模块需要这些库（XRD数据处理完整功能）：
 
 ```bash
-# 安装所有科学计算依赖
+# 安装所有依赖（包括XRD专用库）
 pip install -r requirements_gui.txt
 
 # 这将安装：
-# - numpy
-# - scipy
-# - pandas
-# - matplotlib
-# - Pillow
-# - pyinstaller
+# - numpy, scipy, pandas（科学计算）
+# - matplotlib（数据可视化）
+# - Pillow（图像处理）
+# - h5py（HDF5文件）
+# - pyFAI（XRD径向积分）
+# - fabio（X射线图像格式）
+# - lmfit, peakutils（峰拟合）
+# - tqdm（进度条）
+# - openpyxl, xlrd, xlsxwriter（Excel支持）
+# - scikit-image, opencv-python（图像处理）
+# - pyinstaller（打包工具）
 ```
 
-然后在 `xrd_app.spec` 中取消注释需要的库：
+**注意**：
+- 安装可能需要10-30分钟，取决于网络速度
+- pyFAI 和 fabio 在 Windows 上可能需要 Visual Studio Build Tools
+- 如果某个包安装失败，可以在 requirements_gui.txt 中注释掉该行继续安装
 
-```python
-hiddenimports=[
-    'tkinter',
-    'tkinter.ttk',
-    'tkinter.font',
-    'theme_module',
-    'powder_module',
-    'radial_module',
-    'single_crystal_module',
-    'numpy',        # 取消注释
-    'scipy',        # 取消注释
-    'matplotlib',   # 取消注释
-    'PIL',          # 取消注释
-    'pandas',       # 取消注释
-],
-```
+最新的 `xrd_app.spec` 已经包含所有常用的 XRD 数据处理库，无需手动修改！
 
 #### 方案3：选择性安装需要的库
 

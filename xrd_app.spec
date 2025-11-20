@@ -14,25 +14,114 @@ added_files = [
 
 a = Analysis(
     ['main.py'],
-    pathex=[],
+    pathex=[],  # Add your project path here if needed, e.g., ['D:/your/project/path']
     binaries=[],
     datas=added_files,
     hiddenimports=[
+        # Tkinter GUI modules
         'tkinter',
         'tkinter.ttk',
         'tkinter.font',
         'tkinter.messagebox',
+        'tkinter.filedialog',
+        'tkinter.scrolledtext',
+
+        # Custom application modules
         'theme_module',
         'powder_module',
         'radial_module',
         'single_crystal_module',
-        # Add any other modules that might not be automatically detected
-        # Uncomment the following if your modules use these libraries:
-        # 'numpy',
-        # 'scipy',
-        # 'matplotlib',
-        # 'PIL',
-        # 'pandas',
+
+        # Core scientific computing libraries
+        'numpy',
+        'numpy.core',
+        'numpy.core._multiarray_umath',
+        'scipy',
+        'scipy.optimize',
+        'scipy.signal',
+        'scipy.ndimage',
+        'scipy.interpolate',
+        'scipy.integrate',
+        'scipy.stats',
+        'pandas',
+
+        # Data visualization
+        'matplotlib',
+        'matplotlib.pyplot',
+        'matplotlib.backends',
+        'matplotlib.backends.backend_tkagg',
+        'matplotlib.backends.backend_agg',
+        'matplotlib.figure',
+
+        # Image processing
+        'PIL',
+        'PIL.Image',
+        'PIL.ImageTk',
+        'PIL.ImageDraw',
+        'PIL.ImageFont',
+
+        # Data formats
+        'h5py',
+        'json',
+        'csv',
+
+        # XRD-specific libraries (pyFAI and fabio)
+        'pyFAI',
+        'pyFAI.azimuthalIntegrator',
+        'pyFAI.detectors',
+        'pyFAI.geometryRefinement',
+        'pyFAI.calibrant',
+        'pyFAI.worker',
+
+        # Fabio image format support
+        'fabio',
+        'fabio.adscimage',
+        'fabio.edfimage',
+        'fabio.cbfimage',
+        'fabio.mar345image',
+        'fabio.pilatusimage',
+        'fabio.pixiimage',
+        'fabio.mpaimage',
+        'fabio.tifimage',
+        'fabio.bruker100image',
+        'fabio.brukerimage',
+        'fabio.geimage',
+        'fabio.imgcimage',
+        'fabio.dm3image',
+        'fabio.xsdimage',
+        'fabio.fit2dimage',
+        'fabio.raxisimage',
+        'fabio.dtrekimage',
+        'fabio.hdf5image',
+        'fabio.nexusimage',
+
+        # Progress bar and utilities
+        'tqdm',
+
+        # Additional potentially needed modules
+        'lmfit',           # Peak fitting
+        'skimage',         # Image processing
+        'cv2',             # OpenCV for image operations
+        'openpyxl',        # Excel file support
+        'xlrd',            # Excel reading
+        'xlsxwriter',      # Excel writing
+        'peakutils',       # Peak detection
+        'silx',            # Synchrotron data analysis
+        'pycairo',         # Cairo graphics
+        'PyQt5',           # Qt GUI (if needed)
+        'multiprocessing', # Parallel processing
+        'concurrent.futures',
+        'threading',
+        'queue',
+
+        # Crystallography libraries
+        'pymatgen',        # Materials analysis
+        'ase',             # Atomic simulation environment
+        'CifFile',         # CIF file handling
+
+        # Math and fitting
+        'sympy',           # Symbolic mathematics
+        'statsmodels',     # Statistical models
     ],
     hookspath=[],
     runtime_hooks=[],

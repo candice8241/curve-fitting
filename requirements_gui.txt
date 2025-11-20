@@ -1,26 +1,71 @@
-# XRD Data Post-Processing GUI Application Dependencies
-# 用于GUI应用的Python依赖包
+# XRD Data Post-Processing GUI Application - Complete Dependencies
+# 完整的XRD数据后处理应用程序依赖包
+#
+# 安装说明：
+# pip install -r requirements_gui.txt
+#
+# 注意：有些包可能需要较长时间安装，特别是在Windows上
 
-# Core GUI Framework
-# tkinter is included with Python, no need to install separately
+# ==================== 核心工具 ====================
+# PyInstaller for building executable
+pyinstaller>=5.0.0
 
-# Scientific Computing
+# ==================== GUI框架 ====================
+# tkinter 随 Python 自带，无需单独安装
+# Pillow 用于图像显示
+Pillow>=8.0.0
+
+# ==================== 科学计算核心库 ====================
 numpy>=1.20.0
 scipy>=1.7.0
 pandas>=1.3.0
 
-# Plotting
+# ==================== 数据可视化 ====================
 matplotlib>=3.4.0
 
-# Image Processing (if needed)
-Pillow>=8.0.0
+# ==================== 数据格式支持 ====================
+h5py>=3.0.0           # HDF5 文件支持
 
-# PyInstaller for building executable
-pyinstaller>=5.0.0
+# ==================== XRD专用库 ====================
+# pyFAI - 用于X射线散射数据的径向积分
+pyFAI>=0.21.0
 
-# Optional: Additional packages that might be needed
-# Uncomment if your modules use these:
-# scikit-learn>=1.0.0
-# openpyxl>=3.0.0  # For Excel file support
-# h5py>=3.0.0      # For HDF5 file support
-# fabio>=0.14.0    # For crystallography image formats
+# fabio - 支持多种X射线探测器图像格式
+fabio>=0.14.0
+
+# ==================== 进度显示 ====================
+tqdm>=4.60.0
+
+# ==================== Excel文件支持 ====================
+openpyxl>=3.0.0       # Excel 读写
+xlrd>=2.0.0           # Excel 读取
+xlsxwriter>=3.0.0     # Excel 写入
+
+# ==================== 图像处理 ====================
+scikit-image>=0.18.0  # 高级图像处理
+opencv-python>=4.5.0  # OpenCV（可选，如果不需要可注释掉）
+
+# ==================== 峰拟合与分析 ====================
+lmfit>=1.0.0          # 非线性最小二乘拟合
+peakutils>=1.3.0      # 峰检测工具
+
+# ==================== 同步辐射数据分析（可选）====================
+# silx>=1.0.0         # ESRF同步辐射数据分析工具（可选）
+
+# ==================== 晶体学库（可选）====================
+# pymatgen>=2022.0.0  # 材料分析（可选，较大）
+# ase>=3.22.0         # 原子模拟环境（可选）
+# PyCifRW>=4.4.0      # CIF文件处理（可选）
+
+# ==================== 统计与符号计算（可选）====================
+# sympy>=1.9.0        # 符号数学（如需要取消注释）
+# statsmodels>=0.13.0 # 统计模型（如需要取消注释）
+
+# ==================== Qt支持（如果需要）====================
+# PyQt5>=5.15.0       # Qt GUI框架（可选，如使用Qt界面）
+
+# ==================== 注意事项 ====================
+# 1. 某些包（如 pyFAI、fabio）可能需要编译，在Windows上可能需要Visual Studio
+# 2. 如果某个包安装失败，可以先注释掉继续安装其他包
+# 3. opencv-python 比较大，如不需要可注释掉
+# 4. pymatgen 和 ase 是大型库，仅在需要晶体学分析时安装
