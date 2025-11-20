@@ -152,16 +152,8 @@ a = Analysis(
     hookspath=[],
     runtime_hooks=[],
     excludes=[
-        # Explicitly exclude pyFAI to prevent auto-detection
-        'pyFAI',
-        'pyFAI.integrator',
-        'pyFAI.integrator.load_engines',
-        'pyFAI.ext',
-        'pyFAI.ext.splitPixel',
-        'pyFAI.ext.splitPixelFull',
-        'pyFAI.ext.splitPixelFullCSC',
-        'pyFAI.ext.splitPixelFullCSR',
-        'pyFAI.ext.splitPixelFullLUT',
+        # Note: pyFAI is needed by radial_module.py and batch_integration.py
+        # Do NOT exclude it. Use --collect-all pyFAI when building
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
