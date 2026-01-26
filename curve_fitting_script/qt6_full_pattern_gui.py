@@ -55,7 +55,6 @@ class Phase:
     peaks: List[Tuple[float, float]] = field(default_factory=list)
     scale: float = 1.0
     color: str = "#2563eb"
-    visible: bool = True
     generated_hkl: bool = False
 
 
@@ -484,7 +483,7 @@ def compute_pattern(
     background: np.ndarray,
     zero_shift: float,
 ) -> Tuple[np.ndarray, np.ndarray, List[np.ndarray]]:
-    usable_phases = [phase for phase in phases if phase.visible and phase.peaks]
+    usable_phases = [phase for phase in phases if phase.peaks]
 
     if method in ("Pawley", "Le Bail") and y_obs is not None and usable_phases:
         centers: List[float] = []
@@ -667,8 +666,6 @@ class FitPlotCanvas(FigureCanvas):
         x_min, x_max = float(np.min(x)), float(np.max(x))
         label_rows = [[], []]
         for phase_index, phase in enumerate(phases):
-            if not phase.visible:
-                continue
             row = phase_index % 2
             label_rows[row].append(phase.name)
             line_width = 1.6 if selected_index == phase_index else 1.0
@@ -769,9 +766,9 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         phase_buttons.addWidget(self.remove_phase_button)
         phase_buttons.addWidget(self.clear_phases_button)
 
-        self.phase_table = QtWidgets.QTableWidget(0, 9)
+        self.phase_table = QtWidgets.QTableWidget(0, 8)
         self.phase_table.setHorizontalHeaderLabels(
-            ["Phase", "a", "b", "c", "alpha", "beta", "gamma", "Scale", "Use"]
+            ["Phase", "a", "b", "c", "alpha", "beta", "gamma", "Scale"]
         )
         self.phase_table.horizontalHeader().setSectionResizeMode(
             QtWidgets.QHeaderView.ResizeMode.Stretch
@@ -1195,27 +1192,6 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             scale_item = QtWidgets.QTableWidgetItem(f"{phase.scale:.4f}")
             self.phase_table.setItem(row, 7, scale_item)
 
-            use_item = QtWidgets.QTableWidgetItem("")
-            use_item.setFlags(
-                (use_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                | Qt.ItemFlag.ItemIsUserCheckable
-            )
-            use_item.setCheckState(
-                Qt.CheckState.Checked if phase.visible else Qt.CheckState.Unchecked
-            )
-            self.phase_table.setItem(row, 8, use_item)
-
-            tint = QtGui.QColor(phase.color)
-            tint.setAlpha(40 if phase.visible else 0)
-            for col in range(self.phase_table.columnCount()):
-                item = self.phase_table.item(row, col)
-                if item is None:
-                    continue
-                if phase.visible:
-                    item.setBackground(QtGui.QBrush(tint))
-                else:
-                    item.setBackground(QtGui.QBrush())
-
         self._table_updating = False
 
     def on_phase_selection_changed(self) -> None:
@@ -1234,12 +1210,6 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         phase = self.phases[row]
         item = self.phase_table.item(row, column)
         if item is None:
-            return
-
-        if column == 8:
-            phase.visible = item.checkState() == Qt.CheckState.Checked
-            self.update_phase_table()
-            self.schedule_update()
             return
 
         if column == 7:
