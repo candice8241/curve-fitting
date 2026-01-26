@@ -526,6 +526,8 @@ class FitPlotCanvas(FigureCanvas):
         fig = Figure(figsize=(8, 6), facecolor="#f8fafc")
         super().__init__(fig)
         self.setParent(parent)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setFocus()
         grid = fig.add_gridspec(2, 1, height_ratios=[3.5, 1.0], hspace=0.05)
         self.axes_main = fig.add_subplot(grid[0])
         self.axes_diff = fig.add_subplot(grid[1], sharex=self.axes_main)
@@ -643,18 +645,27 @@ class FitPlotCanvas(FigureCanvas):
             target_range = max(diff_range, 0.05 * base_range)
             self.axes_diff.set_ylim(-target_range, target_range)
 
-        # Tick marks for phase peaks
+        # Tick marks for phase peaks (use diff axis when available)
+        tick_axis = self.axes_diff if y_obs is not None else self.axes_main
         if y_obs is not None:
-            y_min = float(np.min(y_obs))
-            y_max = float(np.max(y_obs))
-            tick_base = y_min - 0.08 * (y_max - y_min)
+            diff = y_obs - y_calc
+            diff_range = float(np.max(np.abs(diff)))
+            base_range = diff_range if diff_range > 0 else 1.0
+            tick_base = -1.2 * base_range
+            tick_height = 0.25 * base_range
+            row_gap = 0.35 * base_range
+            self.axes_diff.set_ylim(
+                min(self.axes_diff.get_ylim()[0], tick_base - row_gap * 1.4),
+                self.axes_diff.get_ylim()[1],
+            )
         else:
-            tick_base = float(np.min(y_calc)) - 0.08 * (float(np.max(y_calc)) - float(np.min(y_calc)))
-        tick_height = 0.04 * (float(np.max(y_calc)) - float(np.min(y_calc)))
+            base_range = float(np.max(y_calc) - np.min(y_calc))
+            tick_base = float(np.min(y_calc)) - 0.08 * base_range
+            tick_height = 0.04 * base_range
+            row_gap = 0.05 * base_range
+
         x_min, x_max = float(np.min(x)), float(np.max(x))
-        phase_labels = [phase.name for phase in phases if phase.visible]
         label_rows = [[], []]
-        row_gap = 0.05 * (float(np.max(y_calc)) - float(np.min(y_calc)))
         for phase_index, phase in enumerate(phases):
             if not phase.visible:
                 continue
@@ -663,7 +674,7 @@ class FitPlotCanvas(FigureCanvas):
             line_width = 1.6 if selected_index == phase_index else 1.0
             row_base = tick_base - row * row_gap
             for center, _ in phase.peaks:
-                self.axes_main.plot(
+                tick_axis.plot(
                     [center, center],
                     [row_base, row_base + tick_height],
                     color=phase.color,
@@ -673,7 +684,7 @@ class FitPlotCanvas(FigureCanvas):
             if not names:
                 continue
             row_base = tick_base - row_index * row_gap
-            self.axes_main.text(
+            tick_axis.text(
                 x_min + 0.01 * (x_max - x_min),
                 row_base + tick_height * 0.6,
                 " | ".join(names),
@@ -707,6 +718,8 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.background_points: List[Tuple[float, float]] = []
         self.background_pick_mode = False
         self._peaks_dirty = True
+        self._last_view = None
+        self._last_data_range = None
 
         self._table_updating = False
         self._dragging_phase: Optional[int] = None
@@ -786,6 +799,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         )
         self.method_combo = QtWidgets.QComboBox()
         self.method_combo.addItems(["Rietveld", "Pawley", "Le Bail"])
+        self.method_combo.setCurrentText("Le Bail")
         self.profile_combo = QtWidgets.QComboBox()
         self.profile_combo.addItems(["Voigt", "Gaussian", "Lorentzian", "Pseudo-Voigt"])
 
@@ -900,9 +914,9 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
 
         self.setStyleSheet(
             """
-            QWidget { background: #f1f5f9; }
+            QWidget { background: #f8fafc; }
             QGroupBox {
-                border: 1px solid #cbd5f5;
+                border: 1px solid #e2e8f0;
                 border-radius: 6px;
                 margin-top: 8px;
                 padding: 6px;
@@ -912,28 +926,29 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
                 subcontrol-origin: margin;
                 left: 10px;
                 padding: 0 4px;
-                color: #334155;
-                font-weight: bold;
+                color: #0f172a;
+                font-weight: 600;
             }
             QLabel { color: #0f172a; }
             QPushButton {
-                background-color: #4f46e5;
+                background-color: #2563eb;
                 color: white;
                 border-radius: 6px;
                 padding: 6px;
             }
-            QPushButton:hover { background-color: #6366f1; }
+            QPushButton:hover { background-color: #1d4ed8; }
             QPushButton:checked { background-color: #0ea5e9; }
             QTableWidget {
                 background: #ffffff;
                 gridline-color: #e2e8f0;
                 border: 1px solid #e2e8f0;
+                alternate-background-color: #f1f5f9;
             }
             QHeaderView::section {
-                background: #e2e8f0;
+                background: #f1f5f9;
                 color: #334155;
                 padding: 4px;
-                border: 1px solid #cbd5f5;
+                border: 1px solid #e2e8f0;
             }
             """
         )
@@ -973,6 +988,10 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
     def mark_peaks_dirty(self) -> None:
         self._peaks_dirty = True
 
+    def _flash_cursor(self) -> None:
+        QtWidgets.QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        QtCore.QTimer.singleShot(120, QtWidgets.QApplication.restoreOverrideCursor)
+
     def _apply_scheduled_update(self) -> None:
         if not self._pending_update:
             return
@@ -1003,6 +1022,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.background_points.sort(key=lambda item: item[0])
         self._update_background_controls()
         self.set_status(f"Background points: {len(self.background_points)}")
+        self._flash_cursor()
         self.schedule_update()
 
     def _remove_background_point(self, x_val: float, y_val: float) -> None:
@@ -1023,6 +1043,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             self.background_points.pop(best_index)
             self._update_background_controls()
             self.set_status(f"Background points: {len(self.background_points)}")
+            self._flash_cursor()
             self.schedule_update()
 
     def load_data(self) -> None:
@@ -1045,6 +1066,8 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.b1_spin.setValue(0.0)
         self.background_points.clear()
         self._peaks_dirty = True
+        self._last_view = None
+        self._last_data_range = None
         self._update_background_controls()
         self.set_status("Data loaded.")
         self.refresh_phase_peaks()
@@ -1182,6 +1205,17 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             )
             self.phase_table.setItem(row, 8, use_item)
 
+            tint = QtGui.QColor(phase.color)
+            tint.setAlpha(40 if phase.visible else 0)
+            for col in range(self.phase_table.columnCount()):
+                item = self.phase_table.item(row, col)
+                if item is None:
+                    continue
+                if phase.visible:
+                    item.setBackground(QtGui.QBrush(tint))
+                else:
+                    item.setBackground(QtGui.QBrush())
+
         self._table_updating = False
 
     def on_phase_selection_changed(self) -> None:
@@ -1204,6 +1238,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
 
         if column == 8:
             phase.visible = item.checkState() == Qt.CheckState.Checked
+            self.update_phase_table()
             self.schedule_update()
             return
 
@@ -1272,6 +1307,20 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             return
         self._pending_update = False
         self._update_background_controls()
+        preserve_view = False
+        view_state = None
+        current_range = (float(np.min(self.data_x)), float(np.max(self.data_x)))
+        if (
+            self.plot_canvas.current_x is not None
+            and self._last_data_range == current_range
+            and self.plot_canvas.axes_main.has_data()
+        ):
+            preserve_view = True
+            view_state = (
+                self.plot_canvas.axes_main.get_xlim(),
+                self.plot_canvas.axes_main.get_ylim(),
+                self.plot_canvas.axes_diff.get_ylim(),
+            )
         self.profile_params = ProfileParams(
             shape=self.profile_combo.currentText(),
             sigma=self.sigma_spin.value(),
@@ -1308,6 +1357,17 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             self.background_points,
             self.phases,
             self.selected_phase_index,
+        )
+        self._last_data_range = current_range
+        if preserve_view and view_state is not None:
+            self.plot_canvas.axes_main.set_xlim(view_state[0])
+            self.plot_canvas.axes_main.set_ylim(view_state[1])
+            self.plot_canvas.axes_diff.set_ylim(view_state[2])
+            self.plot_canvas.draw_idle()
+        self._last_view = (
+            self.plot_canvas.axes_main.get_xlim(),
+            self.plot_canvas.axes_main.get_ylim(),
+            self.plot_canvas.axes_diff.get_ylim(),
         )
 
     def perform_fit(self) -> None:
