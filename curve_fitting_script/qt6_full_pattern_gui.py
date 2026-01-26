@@ -56,6 +56,7 @@ class Phase:
     scale: float = 1.0
     color: str = "#2563eb"
     generated_hkl: bool = False
+    symmetry: Optional[str] = None
 
 
 @dataclass
@@ -341,6 +342,16 @@ def merge_peaks(peaks: List[Tuple[float, float]], tolerance: float = 0.02) -> Li
     return merged
 
 
+def is_cubic_cell(cell: CellParameters, tol: float = 1e-3) -> bool:
+    return (
+        abs(cell.a - cell.b) <= tol
+        and abs(cell.b - cell.c) <= tol
+        and abs(cell.alpha - 90.0) <= tol
+        and abs(cell.beta - 90.0) <= tol
+        and abs(cell.gamma - 90.0) <= tol
+    )
+
+
 def generate_hkl_list(
     cell: CellParameters,
     two_theta_min: float,
@@ -496,7 +507,6 @@ def compute_pattern(
         target = y_obs - background
         target = np.clip(target, 0.0, None)
         intensities, _ = nnls(matrix, target)
-        calc = background + matrix @ intensities
         phase_patterns: List[np.ndarray] = [np.zeros_like(x) for _ in usable_phases]
         offset = 0
         for phase_index, phase in enumerate(usable_phases):
@@ -506,6 +516,10 @@ def compute_pattern(
                     offset : offset + count
                 ]
             offset += count
+        calc = background.copy()
+        for phase_index, phase in enumerate(usable_phases):
+            phase_patterns[phase_index] *= phase.scale
+            calc += phase_patterns[phase_index]
         return calc, background, phase_patterns
 
     phase_patterns = []
@@ -911,9 +925,9 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
 
         self.setStyleSheet(
             """
-            QWidget { background: #f8fafc; }
+            QWidget { background: #eef5ff; }
             QGroupBox {
-                border: 1px solid #e2e8f0;
+                border: 1px solid #c9dbf8;
                 border-radius: 6px;
                 margin-top: 8px;
                 padding: 6px;
@@ -923,29 +937,29 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
                 subcontrol-origin: margin;
                 left: 10px;
                 padding: 0 4px;
-                color: #0f172a;
+                color: #1e3a8a;
                 font-weight: 600;
             }
-            QLabel { color: #0f172a; }
+            QLabel { color: #1e293b; }
             QPushButton {
-                background-color: #2563eb;
+                background-color: #4f8ff7;
                 color: white;
                 border-radius: 6px;
                 padding: 6px;
             }
-            QPushButton:hover { background-color: #1d4ed8; }
-            QPushButton:checked { background-color: #0ea5e9; }
+            QPushButton:hover { background-color: #3f7fe6; }
+            QPushButton:checked { background-color: #5ba5ff; }
             QTableWidget {
                 background: #ffffff;
-                gridline-color: #e2e8f0;
-                border: 1px solid #e2e8f0;
-                alternate-background-color: #f1f5f9;
+                gridline-color: #dbeafe;
+                border: 1px solid #dbeafe;
+                alternate-background-color: #eff6ff;
             }
             QHeaderView::section {
-                background: #f1f5f9;
-                color: #334155;
+                background: #e0edff;
+                color: #1e3a8a;
                 padding: 4px;
-                border: 1px solid #e2e8f0;
+                border: 1px solid #c9dbf8;
             }
             """
         )
@@ -985,10 +999,6 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
     def mark_peaks_dirty(self) -> None:
         self._peaks_dirty = True
 
-    def _flash_cursor(self) -> None:
-        QtWidgets.QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        QtCore.QTimer.singleShot(120, QtWidgets.QApplication.restoreOverrideCursor)
-
     def _apply_scheduled_update(self) -> None:
         if not self._pending_update:
             return
@@ -1019,7 +1029,6 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.background_points.sort(key=lambda item: item[0])
         self._update_background_controls()
         self.set_status(f"Background points: {len(self.background_points)}")
-        self._flash_cursor()
         self.schedule_update()
 
     def _remove_background_point(self, x_val: float, y_val: float) -> None:
@@ -1040,7 +1049,6 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             self.background_points.pop(best_index)
             self._update_background_controls()
             self.set_status(f"Background points: {len(self.background_points)}")
-            self._flash_cursor()
             self.schedule_update()
 
     def load_data(self) -> None:
@@ -1089,13 +1097,17 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             if extension == ".cif":
                 wavelength = self.wavelength_spin.value()
                 cell, hkl_list, fixed_peaks = parse_cif(file_path, wavelength=wavelength)
-                phase = Phase(
+            symmetry = None
+            if cell and is_cubic_cell(cell):
+                symmetry = "cubic"
+            phase = Phase(
                     name=phase_name,
                     source=file_path,
                     cell=cell,
                     hkl_list=hkl_list,
                     fixed_peaks=fixed_peaks,
                     color=color,
+                symmetry=symmetry,
                 )
             else:
                 rows, wavelength = parse_jcpds(file_path)
@@ -1185,6 +1197,11 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
                 set_cell(4, phase.cell.alpha)
                 set_cell(5, phase.cell.beta)
                 set_cell(6, phase.cell.gamma)
+                if phase.symmetry == "cubic":
+                    for col in (2, 3, 4, 5, 6):
+                        item = self.phase_table.item(row, col)
+                        if item is not None:
+                            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             else:
                 for col in range(1, 7):
                     set_cell(col, None)
@@ -1233,15 +1250,36 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
 
         if column == 1:
             phase.cell.a = float(value)
+            if phase.symmetry == "cubic":
+                phase.cell.b = phase.cell.a
+                phase.cell.c = phase.cell.a
+                phase.cell.alpha = 90.0
+                phase.cell.beta = 90.0
+                phase.cell.gamma = 90.0
         elif column == 2:
+            if phase.symmetry == "cubic":
+                self.update_phase_table()
+                return
             phase.cell.b = float(value)
         elif column == 3:
+            if phase.symmetry == "cubic":
+                self.update_phase_table()
+                return
             phase.cell.c = float(value)
         elif column == 4:
+            if phase.symmetry == "cubic":
+                self.update_phase_table()
+                return
             phase.cell.alpha = float(value)
         elif column == 5:
+            if phase.symmetry == "cubic":
+                self.update_phase_table()
+                return
             phase.cell.beta = float(value)
         elif column == 6:
+            if phase.symmetry == "cubic":
+                self.update_phase_table()
+                return
             phase.cell.gamma = float(value)
         self._peaks_dirty = True
         self.refresh_phase_peaks()
