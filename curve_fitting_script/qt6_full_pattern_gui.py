@@ -19,10 +19,13 @@ import numpy as np
 from scipy.optimize import least_squares, nnls
 from scipy.special import wofz
 
-from PyQt6 import QtCore, QtWidgets
+from PyQt6 import QtCore, QtGui, QtWidgets
 from PyQt6.QtCore import Qt
 
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qtagg import (
+    FigureCanvasQTAgg as FigureCanvas,
+    NavigationToolbar2QT as NavigationToolbar,
+)
 from matplotlib.figure import Figure
 
 
@@ -51,7 +54,7 @@ class Phase:
     fixed_peaks: List[Tuple[float, float]] = field(default_factory=list)
     peaks: List[Tuple[float, float]] = field(default_factory=list)
     scale: float = 1.0
-    color: str = "tab:blue"
+    color: str = "#2563eb"
     visible: bool = True
     generated_hkl: bool = False
 
@@ -457,26 +460,37 @@ def compute_background(x: np.ndarray, b0: float, b1: float) -> np.ndarray:
     return b0 + b1 * (x - x_ref)
 
 
+def interpolate_background(
+    x: np.ndarray, points: List[Tuple[float, float]], fallback: np.ndarray
+) -> np.ndarray:
+    if len(points) < 2:
+        return fallback
+    by_x: Dict[float, List[float]] = {}
+    for x_val, y_val in points:
+        by_x.setdefault(float(x_val), []).append(float(y_val))
+    x_vals = sorted(by_x.keys())
+    if len(x_vals) < 2:
+        return fallback
+    y_vals = [sum(by_x[x_val]) / len(by_x[x_val]) for x_val in x_vals]
+    return np.interp(x, x_vals, y_vals, left=y_vals[0], right=y_vals[-1])
+
+
 def compute_pattern(
     x: np.ndarray,
     y_obs: Optional[np.ndarray],
     phases: List[Phase],
     method: str,
     profile: ProfileParams,
-    background_params: Tuple[float, float],
+    background: np.ndarray,
     zero_shift: float,
 ) -> Tuple[np.ndarray, np.ndarray, List[np.ndarray]]:
-    b0, b1 = background_params
-    background = compute_background(x, b0, b1)
     usable_phases = [phase for phase in phases if phase.visible and phase.peaks]
 
     if method in ("Pawley", "Le Bail") and y_obs is not None and usable_phases:
         centers: List[float] = []
-        phase_map: List[int] = []
         for phase_index, phase in enumerate(usable_phases):
             for center, _ in phase.peaks:
                 centers.append(center)
-                phase_map.append(phase_index)
         if not centers:
             return background, background, []
         matrix = build_profile_matrix(x, centers, profile, zero_shift)
@@ -509,16 +523,21 @@ def compute_pattern(
 
 class FitPlotCanvas(FigureCanvas):
     def __init__(self, parent: QtWidgets.QWidget):
-        fig = Figure(figsize=(8, 6))
+        fig = Figure(figsize=(8, 6), facecolor="#f8fafc")
         super().__init__(fig)
         self.setParent(parent)
-        self.axes_main = fig.add_subplot(2, 1, 1)
-        self.axes_diff = fig.add_subplot(2, 1, 2, sharex=self.axes_main)
+        grid = fig.add_gridspec(2, 1, height_ratios=[3.5, 1.0], hspace=0.05)
+        self.axes_main = fig.add_subplot(grid[0])
+        self.axes_diff = fig.add_subplot(grid[1], sharex=self.axes_main)
         self.axes_main.set_ylabel("Intensity")
         self.axes_diff.set_xlabel("2theta")
         self.axes_diff.set_ylabel("Diff")
-        self.phase_lines: List[Tuple[int, object]] = []
-        fig.subplots_adjust(hspace=0.05)
+        self.axes_main.set_facecolor("#f8fafc")
+        self.axes_diff.set_facecolor("#f8fafc")
+        self.axes_main.grid(True, color="#e2e8f0", linewidth=0.7)
+        self.axes_diff.grid(True, color="#e2e8f0", linewidth=0.7)
+        self.calc_line = None
+        self.background_markers = None
 
     def render(
         self,
@@ -526,48 +545,59 @@ class FitPlotCanvas(FigureCanvas):
         y_obs: Optional[np.ndarray],
         y_calc: Optional[np.ndarray],
         y_bkg: Optional[np.ndarray],
-        phase_patterns: List[np.ndarray],
+        background_points: List[Tuple[float, float]],
         phases: List[Phase],
         selected_index: Optional[int],
     ) -> None:
         self.axes_main.clear()
         self.axes_diff.clear()
-        self.phase_lines = []
+        self.calc_line = None
+        self.background_markers = None
 
         if x is None or y_calc is None:
             self.draw()
             return
 
         if y_obs is not None:
-            self.axes_main.plot(x, y_obs, "b+", markersize=3, label="obs")
+            self.axes_main.plot(
+                x,
+                y_obs,
+                linestyle="none",
+                marker="+",
+                markersize=3,
+                color="#2563eb",
+                label="obs",
+            )
 
-        self.axes_main.plot(x, y_calc, color="green", linewidth=1.5, label="calc")
+        self.calc_line = self.axes_main.plot(
+            x, y_calc, color="#22c55e", linewidth=1.8, label="calc"
+        )[0]
+        self.calc_line.set_picker(5)
         if y_bkg is not None:
-            self.axes_main.plot(x, y_bkg, color="red", linewidth=1.2, label="bkg")
+            self.axes_main.plot(x, y_bkg, color="#ef4444", linewidth=1.2, label="bkg")
 
-        pattern_index = 0
-        for phase_index, phase in enumerate(phases):
-            if not phase.visible:
-                continue
-            if pattern_index < len(phase_patterns):
-                line = self.axes_main.plot(
-                    x,
-                    phase_patterns[pattern_index],
-                    color=phase.color,
-                    linewidth=1.0,
-                    alpha=0.8,
-                    label=phase.name,
-                )[0]
-                if selected_index is not None and phase_index == selected_index:
-                    line.set_linewidth(2.0)
-                line.set_picker(5)
-                self.phase_lines.append((phase_index, line))
-            pattern_index += 1
+        if background_points:
+            points_x = [point[0] for point in background_points]
+            points_y = [point[1] for point in background_points]
+            self.background_markers = self.axes_main.scatter(
+                points_x,
+                points_y,
+                s=28,
+                color="#f59e0b",
+                edgecolors="#f8fafc",
+                linewidths=0.5,
+                label="bkg pts",
+                zorder=4,
+            )
 
         if y_obs is not None:
             diff = y_obs - y_calc
-            self.axes_diff.plot(x, diff, color="cyan", linewidth=1.0, label="diff")
+            self.axes_diff.plot(x, diff, color="#06b6d4", linewidth=1.0, label="diff")
             self.axes_diff.axhline(0.0, color="black", linewidth=0.8)
+            base_range = float(np.max(y_calc) - np.min(y_calc))
+            diff_range = float(np.max(np.abs(diff)))
+            target_range = max(diff_range, 0.05 * base_range)
+            self.axes_diff.set_ylim(-target_range, target_range)
 
         # Tick marks for phase peaks
         if y_obs is not None:
@@ -577,21 +607,24 @@ class FitPlotCanvas(FigureCanvas):
         else:
             tick_base = float(np.min(y_calc)) - 0.08 * (float(np.max(y_calc)) - float(np.min(y_calc)))
         tick_height = 0.04 * (float(np.max(y_calc)) - float(np.min(y_calc)))
-        for phase in phases:
+        for phase_index, phase in enumerate(phases):
             if not phase.visible:
                 continue
+            line_width = 1.6 if selected_index == phase_index else 1.0
             for center, _ in phase.peaks:
                 self.axes_main.plot(
                     [center, center],
                     [tick_base, tick_base + tick_height],
                     color=phase.color,
-                    linewidth=1.0,
+                    linewidth=line_width,
                 )
 
-        self.axes_main.legend(loc="upper right", fontsize=9)
+        self.axes_main.legend(loc="upper right", fontsize=9, frameon=True)
         self.axes_main.set_ylabel("Intensity")
         self.axes_diff.set_xlabel("2theta")
         self.axes_diff.set_ylabel("Diff")
+        self.axes_main.grid(True, color="#e2e8f0", linewidth=0.7)
+        self.axes_diff.grid(True, color="#e2e8f0", linewidth=0.7)
         self.draw()
 
 
@@ -607,13 +640,19 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.selected_phase_index: Optional[int] = None
         self.profile_params = ProfileParams(shape="Voigt", sigma=0.05, gamma=0.05, eta=0.5)
         self.zero_shift = 0.0
-        self.background_params = (0.0, 0.0)
+        self.background_points: List[Tuple[float, float]] = []
+        self.background_pick_mode = False
 
         self._table_updating = False
         self._dragging_phase: Optional[int] = None
         self._drag_anchor_x: Optional[float] = None
         self._drag_start_cell: Optional[CellParameters] = None
         self._last_drag_ms = 0
+        self._pending_update = False
+        self._update_timer = QtCore.QTimer(self)
+        self._update_timer.setInterval(250)
+        self._update_timer.setSingleShot(True)
+        self._update_timer.timeout.connect(self._apply_scheduled_update)
 
         self._build_ui()
         self._connect_signals()
@@ -660,6 +699,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.phase_table.setSelectionMode(
             QtWidgets.QAbstractItemView.SelectionMode.SingleSelection
         )
+        self.phase_table.setAlternatingRowColors(True)
 
         phase_layout.addLayout(phase_buttons)
         phase_layout.addWidget(self.phase_table)
@@ -675,36 +715,64 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.sigma_spin.setRange(1e-4, 5.0)
         self.sigma_spin.setDecimals(4)
         self.sigma_spin.setValue(0.05)
+        self.sigma_spin.setSingleStep(0.005)
+        self.sigma_spin.setStepType(
+            QtWidgets.QAbstractSpinBox.StepType.AdaptiveDecimalStepType
+        )
 
         self.gamma_spin = QtWidgets.QDoubleSpinBox()
         self.gamma_spin.setRange(1e-4, 5.0)
         self.gamma_spin.setDecimals(4)
         self.gamma_spin.setValue(0.05)
+        self.gamma_spin.setSingleStep(0.005)
+        self.gamma_spin.setStepType(
+            QtWidgets.QAbstractSpinBox.StepType.AdaptiveDecimalStepType
+        )
 
         self.eta_spin = QtWidgets.QDoubleSpinBox()
         self.eta_spin.setRange(0.0, 1.0)
         self.eta_spin.setDecimals(3)
         self.eta_spin.setValue(0.5)
+        self.eta_spin.setSingleStep(0.01)
+        self.eta_spin.setStepType(
+            QtWidgets.QAbstractSpinBox.StepType.AdaptiveDecimalStepType
+        )
 
         self.wavelength_spin = QtWidgets.QDoubleSpinBox()
         self.wavelength_spin.setRange(0.1, 3.0)
         self.wavelength_spin.setDecimals(5)
         self.wavelength_spin.setValue(1.5406)
+        self.wavelength_spin.setSingleStep(0.0005)
+        self.wavelength_spin.setStepType(
+            QtWidgets.QAbstractSpinBox.StepType.AdaptiveDecimalStepType
+        )
 
         self.zero_shift_spin = QtWidgets.QDoubleSpinBox()
         self.zero_shift_spin.setRange(-0.5, 0.5)
         self.zero_shift_spin.setDecimals(4)
         self.zero_shift_spin.setValue(0.0)
+        self.zero_shift_spin.setSingleStep(0.001)
+        self.zero_shift_spin.setStepType(
+            QtWidgets.QAbstractSpinBox.StepType.AdaptiveDecimalStepType
+        )
 
         self.b0_spin = QtWidgets.QDoubleSpinBox()
         self.b0_spin.setRange(-1e6, 1e6)
         self.b0_spin.setDecimals(3)
         self.b0_spin.setValue(0.0)
+        self.b0_spin.setSingleStep(5.0)
+        self.b0_spin.setStepType(
+            QtWidgets.QAbstractSpinBox.StepType.AdaptiveDecimalStepType
+        )
 
         self.b1_spin = QtWidgets.QDoubleSpinBox()
         self.b1_spin.setRange(-1e4, 1e4)
         self.b1_spin.setDecimals(6)
         self.b1_spin.setValue(0.0)
+        self.b1_spin.setSingleStep(0.001)
+        self.b1_spin.setStepType(
+            QtWidgets.QAbstractSpinBox.StepType.AdaptiveDecimalStepType
+        )
 
         fit_layout.addRow("Method", self.method_combo)
         fit_layout.addRow("Profile", self.profile_combo)
@@ -713,8 +781,23 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         fit_layout.addRow("Eta", self.eta_spin)
         fit_layout.addRow("Wavelength (A)", self.wavelength_spin)
         fit_layout.addRow("Zero shift (deg)", self.zero_shift_spin)
-        fit_layout.addRow("Background b0", self.b0_spin)
-        fit_layout.addRow("Background b1", self.b1_spin)
+
+        background_group = QtWidgets.QGroupBox("Background")
+        background_layout = QtWidgets.QVBoxLayout(background_group)
+        bg_buttons = QtWidgets.QHBoxLayout()
+        self.bg_pick_button = QtWidgets.QPushButton("Pick Background")
+        self.bg_pick_button.setCheckable(True)
+        self.bg_clear_button = QtWidgets.QPushButton("Clear Background")
+        bg_buttons.addWidget(self.bg_pick_button)
+        bg_buttons.addWidget(self.bg_clear_button)
+        background_layout.addLayout(bg_buttons)
+        self.bg_points_label = QtWidgets.QLabel("Points: 0 (left-click to add, right-click to remove)")
+        self.bg_points_label.setWordWrap(True)
+        background_layout.addWidget(self.bg_points_label)
+        bg_params = QtWidgets.QFormLayout()
+        bg_params.addRow("Fallback b0", self.b0_spin)
+        bg_params.addRow("Fallback b1", self.b1_spin)
+        background_layout.addLayout(bg_params)
 
         action_group = QtWidgets.QGroupBox("Actions")
         action_layout = QtWidgets.QVBoxLayout(action_group)
@@ -728,16 +811,63 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         control_layout.addWidget(data_group)
         control_layout.addWidget(phase_group)
         control_layout.addWidget(fit_group)
+        control_layout.addWidget(background_group)
         control_layout.addWidget(action_group)
         control_layout.addStretch(1)
 
-        self.plot_canvas = FitPlotCanvas(self)
+        plot_container = QtWidgets.QWidget()
+        plot_layout = QtWidgets.QVBoxLayout(plot_container)
+        plot_layout.setContentsMargins(4, 4, 4, 4)
+        self.plot_canvas = FitPlotCanvas(plot_container)
+        self.toolbar = NavigationToolbar(self.plot_canvas, self)
+        plot_layout.addWidget(self.toolbar)
+        plot_layout.addWidget(self.plot_canvas)
         splitter.addWidget(controls)
-        splitter.addWidget(self.plot_canvas)
+        splitter.addWidget(plot_container)
         splitter.setStretchFactor(1, 1)
 
         self.status_bar = QtWidgets.QStatusBar()
         self.setStatusBar(self.status_bar)
+
+        self.setStyleSheet(
+            """
+            QWidget { background: #f1f5f9; }
+            QGroupBox {
+                border: 1px solid #cbd5f5;
+                border-radius: 6px;
+                margin-top: 8px;
+                padding: 6px;
+                background: #ffffff;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 4px;
+                color: #334155;
+                font-weight: bold;
+            }
+            QLabel { color: #0f172a; }
+            QPushButton {
+                background-color: #4f46e5;
+                color: white;
+                border-radius: 6px;
+                padding: 6px;
+            }
+            QPushButton:hover { background-color: #6366f1; }
+            QPushButton:checked { background-color: #0ea5e9; }
+            QTableWidget {
+                background: #ffffff;
+                gridline-color: #e2e8f0;
+                border: 1px solid #e2e8f0;
+            }
+            QHeaderView::section {
+                background: #e2e8f0;
+                color: #334155;
+                padding: 4px;
+                border: 1px solid #cbd5f5;
+            }
+            """
+        )
 
     def _connect_signals(self) -> None:
         self.load_data_button.clicked.connect(self.load_data)
@@ -746,18 +876,20 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.clear_phases_button.clicked.connect(self.clear_phases)
         self.phase_table.itemSelectionChanged.connect(self.on_phase_selection_changed)
         self.phase_table.cellChanged.connect(self.on_phase_cell_changed)
-        self.method_combo.currentTextChanged.connect(self.update_pattern)
+        self.method_combo.currentTextChanged.connect(self.schedule_update)
         self.profile_combo.currentTextChanged.connect(self.update_profile)
         self.sigma_spin.valueChanged.connect(self.update_profile)
         self.gamma_spin.valueChanged.connect(self.update_profile)
         self.eta_spin.valueChanged.connect(self.update_profile)
-        self.wavelength_spin.valueChanged.connect(self.update_pattern)
-        self.zero_shift_spin.valueChanged.connect(self.update_pattern)
-        self.b0_spin.valueChanged.connect(self.update_pattern)
-        self.b1_spin.valueChanged.connect(self.update_pattern)
+        self.wavelength_spin.valueChanged.connect(self.schedule_update)
+        self.zero_shift_spin.valueChanged.connect(self.schedule_update)
+        self.b0_spin.valueChanged.connect(self.schedule_update)
+        self.b1_spin.valueChanged.connect(self.schedule_update)
         self.update_button.clicked.connect(self.update_pattern)
         self.fit_button.clicked.connect(self.perform_fit)
         self.save_plot_button.clicked.connect(self.save_plot)
+        self.bg_pick_button.toggled.connect(self.toggle_background_pick)
+        self.bg_clear_button.clicked.connect(self.clear_background_points)
 
         self.plot_canvas.mpl_connect("button_press_event", self.on_plot_press)
         self.plot_canvas.mpl_connect("motion_notify_event", self.on_plot_motion)
@@ -765,6 +897,69 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
 
     def set_status(self, message: str) -> None:
         self.status_bar.showMessage(message, 5000)
+
+    def schedule_update(self) -> None:
+        self._pending_update = True
+        if not self._update_timer.isActive():
+            self._update_timer.start()
+
+    def _apply_scheduled_update(self) -> None:
+        if not self._pending_update:
+            return
+        self._pending_update = False
+        self.update_pattern()
+
+    def toggle_background_pick(self, enabled: bool) -> None:
+        self.background_pick_mode = enabled
+        if enabled:
+            self.plot_canvas.setCursor(Qt.CursorShape.CrossCursor)
+            self.set_status("Background pick enabled: left-click to add, right-click to remove.")
+        else:
+            self.plot_canvas.setCursor(Qt.CursorShape.ArrowCursor)
+
+    def clear_background_points(self) -> None:
+        self.background_points.clear()
+        self._update_background_label()
+        self._update_background_controls()
+        self.schedule_update()
+
+    def _update_background_label(self) -> None:
+        count = len(self.background_points)
+        self.bg_points_label.setText(
+            f"Points: {count} (left-click to add, right-click to remove)"
+        )
+
+    def _update_background_controls(self) -> None:
+        manual = len(self.background_points) >= 2
+        self.b0_spin.setEnabled(not manual)
+        self.b1_spin.setEnabled(not manual)
+
+    def _add_background_point(self, x_val: float, y_val: float) -> None:
+        self.background_points.append((float(x_val), float(y_val)))
+        self.background_points.sort(key=lambda item: item[0])
+        self._update_background_label()
+        self._update_background_controls()
+        self.schedule_update()
+
+    def _remove_background_point(self, x_val: float, y_val: float) -> None:
+        if not self.background_points or self.data_x is None or self.data_y is None:
+            return
+        x_range = float(np.max(self.data_x) - np.min(self.data_x))
+        y_range = float(np.max(self.data_y) - np.min(self.data_y))
+        x_range = max(x_range, 1e-6)
+        y_range = max(y_range, 1e-6)
+        best_index = None
+        best_score = float("inf")
+        for idx, (px, py) in enumerate(self.background_points):
+            score = ((px - x_val) / x_range) ** 2 + ((py - y_val) / y_range) ** 2
+            if score < best_score:
+                best_score = score
+                best_index = idx
+        if best_index is not None and best_score < 0.02**2:
+            self.background_points.pop(best_index)
+            self._update_background_label()
+            self._update_background_controls()
+            self.schedule_update()
 
     def load_data(self) -> None:
         file_path, _ = QtWidgets.QFileDialog.getOpenFileName(
@@ -784,6 +979,9 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.data_label.setText(file_path)
         self.b0_spin.setValue(float(np.min(y)))
         self.b1_spin.setValue(0.0)
+        self.background_points.clear()
+        self._update_background_label()
+        self._update_background_controls()
         self.set_status("Data loaded.")
         self.refresh_phase_peaks()
         self.update_pattern()
@@ -800,7 +998,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
 
         extension = os.path.splitext(file_path)[1].lower()
         phase_name = os.path.basename(file_path)
-        color_cycle = ["tab:blue", "tab:red", "tab:green", "tab:purple", "tab:orange"]
+        color_cycle = ["#2563eb", "#ef4444", "#22c55e", "#a855f7", "#f97316"]
         color = color_cycle[len(self.phases) % len(color_cycle)]
 
         try:
@@ -884,6 +1082,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         for row, phase in enumerate(self.phases):
             name_item = QtWidgets.QTableWidgetItem(phase.name)
             name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            name_item.setForeground(QtGui.QBrush(QtGui.QColor(phase.color)))
             self.phase_table.setItem(row, 0, name_item)
 
             def set_cell(column: int, value: Optional[float]) -> None:
@@ -924,7 +1123,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             self.selected_phase_index = None
         else:
             self.selected_phase_index = selected[0].row()
-        self.update_pattern()
+        self.schedule_update()
 
     def on_phase_cell_changed(self, row: int, column: int) -> None:
         if self._table_updating:
@@ -938,7 +1137,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
 
         if column == 8:
             phase.visible = item.checkState() == Qt.CheckState.Checked
-            self.update_pattern()
+            self.schedule_update()
             return
 
         if column == 7:
@@ -948,7 +1147,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
                 self.update_phase_table()
                 return
             phase.scale = max(0.0, float(value))
-            self.update_pattern()
+            self.schedule_update()
             return
 
         if phase.cell is None:
@@ -973,7 +1172,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         elif column == 6:
             phase.cell.gamma = float(value)
         self.refresh_phase_peaks()
-        self.update_pattern()
+        self.schedule_update()
 
     def refresh_phase_peaks(self) -> None:
         if self.data_x is None:
@@ -994,12 +1193,16 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             gamma=self.gamma_spin.value(),
             eta=self.eta_spin.value(),
         )
-        self.update_pattern()
+        self.schedule_update()
 
     def update_pattern(self) -> None:
         if self.data_x is None:
-            self.plot_canvas.render(None, None, None, None, [], self.phases, self.selected_phase_index)
+            self.plot_canvas.render(
+                None, None, None, None, [], self.phases, self.selected_phase_index
+            )
             return
+        self._pending_update = False
+        self._update_background_controls()
         self.profile_params = ProfileParams(
             shape=self.profile_combo.currentText(),
             sigma=self.sigma_spin.value(),
@@ -1007,16 +1210,17 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             eta=self.eta_spin.value(),
         )
         self.zero_shift = self.zero_shift_spin.value()
-        self.background_params = (self.b0_spin.value(), self.b1_spin.value())
         self.refresh_phase_peaks()
         method = self.method_combo.currentText()
-        calc, bkg, phase_patterns = compute_pattern(
+        fallback = compute_background(self.data_x, self.b0_spin.value(), self.b1_spin.value())
+        background = interpolate_background(self.data_x, self.background_points, fallback)
+        calc, bkg, _ = compute_pattern(
             self.data_x,
             self.data_y,
             self.phases,
             method,
             self.profile_params,
-            self.background_params,
+            background,
             self.zero_shift,
         )
         self.plot_canvas.render(
@@ -1024,7 +1228,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             self.data_y,
             calc,
             bkg,
-            phase_patterns,
+            self.background_points,
             self.phases,
             self.selected_phase_index,
         )
@@ -1042,6 +1246,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         )
         x = self.data_x
         y = self.data_y
+        use_manual_background = len(self.background_points) >= 2
 
         param_map: List[Tuple[str, int, Optional[str]]] = []
         params: List[float] = []
@@ -1065,17 +1270,18 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         upper.append(0.5)
         param_map.append(("zero_shift", -1, None))
 
-        params.append(self.b0_spin.value())
-        lower.append(-1e6)
-        upper.append(1e6)
-        param_map.append(("b0", -1, None))
+        if not use_manual_background:
+            params.append(self.b0_spin.value())
+            lower.append(-1e6)
+            upper.append(1e6)
+            param_map.append(("b0", -1, None))
 
-        params.append(self.b1_spin.value())
-        lower.append(-1e4)
-        upper.append(1e4)
-        param_map.append(("b1", -1, None))
+            params.append(self.b1_spin.value())
+            lower.append(-1e4)
+            upper.append(1e4)
+            param_map.append(("b1", -1, None))
 
-        def apply_params(vector: np.ndarray) -> Tuple[float, Tuple[float, float]]:
+        def apply_params(vector: np.ndarray) -> Tuple[float, np.ndarray, float, float]:
             zero_shift = self.zero_shift_spin.value()
             b0 = self.b0_spin.value()
             b1 = self.b1_spin.value()
@@ -1091,10 +1297,12 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
                     b0 = float(value)
                 elif kind == "b1":
                     b1 = float(value)
-            return zero_shift, (b0, b1)
+            fallback = compute_background(x, b0, b1)
+            background = interpolate_background(x, self.background_points, fallback)
+            return zero_shift, background, b0, b1
 
         def residuals(vector: np.ndarray) -> np.ndarray:
-            zero_shift, background = apply_params(vector)
+            zero_shift, background, _, _ = apply_params(vector)
             self.refresh_phase_peaks()
             calc, _, _ = compute_pattern(
                 x,
@@ -1119,12 +1327,20 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         finally:
             QtWidgets.QApplication.restoreOverrideCursor()
 
-        apply_params(result.x)
-        self.zero_shift_spin.setValue(float(result.x[param_map.index(("zero_shift", -1, None))]))
-        self.b0_spin.setValue(float(result.x[param_map.index(("b0", -1, None))]))
-        self.b1_spin.setValue(float(result.x[param_map.index(("b1", -1, None))]))
+        _, _, b0_value, b1_value = apply_params(result.x)
+        if ("zero_shift", -1, None) in param_map:
+            self.zero_shift_spin.setValue(float(result.x[param_map.index(("zero_shift", -1, None))]))
+        if ("b0", -1, None) in param_map:
+            self.b0_spin.setValue(float(result.x[param_map.index(("b0", -1, None))]))
+        else:
+            self.b0_spin.setValue(b0_value)
+        if ("b1", -1, None) in param_map:
+            self.b1_spin.setValue(float(result.x[param_map.index(("b1", -1, None))]))
+        else:
+            self.b1_spin.setValue(b1_value)
         self.update_phase_table()
         self.refresh_phase_peaks()
+        self._update_background_controls()
         self.update_pattern()
         self.set_status("Fit complete.")
 
@@ -1143,21 +1359,28 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
     def on_plot_press(self, event) -> None:
         if event.inaxes != self.plot_canvas.axes_main:
             return
+        if self.background_pick_mode:
+            if event.xdata is None or event.ydata is None:
+                return
+            if event.button == 1:
+                self._add_background_point(event.xdata, event.ydata)
+            elif event.button == 3:
+                self._remove_background_point(event.xdata, event.ydata)
+            return
         if self.selected_phase_index is None:
+            self.set_status("Select a phase to drag its lattice parameters.")
             return
         if not (0 <= self.selected_phase_index < len(self.phases)):
             return
         phase = self.phases[self.selected_phase_index]
         if phase.cell is None:
+            self.set_status("Selected phase has no lattice parameters to adjust.")
             return
         if event.xdata is None:
             return
-        hit_line = False
-        for phase_index, line in self.plot_canvas.phase_lines:
-            if phase_index == self.selected_phase_index and line.contains(event)[0]:
-                hit_line = True
-                break
-        if not hit_line:
+        if event.button != 1:
+            return
+        if self.plot_canvas.calc_line is None or not self.plot_canvas.calc_line.contains(event)[0]:
             return
         self._dragging_phase = self.selected_phase_index
         self._drag_anchor_x = float(event.xdata)
@@ -1188,12 +1411,13 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         phase.cell.c = self._drag_start_cell.c * scale
         self.update_phase_table()
         self.refresh_phase_peaks()
-        self.update_pattern()
+        self.schedule_update()
 
     def on_plot_release(self, event) -> None:
         self._dragging_phase = None
         self._drag_anchor_x = None
         self._drag_start_cell = None
+        self.schedule_update()
 
 
 def main() -> None:
