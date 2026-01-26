@@ -1097,17 +1097,17 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             if extension == ".cif":
                 wavelength = self.wavelength_spin.value()
                 cell, hkl_list, fixed_peaks = parse_cif(file_path, wavelength=wavelength)
-            symmetry = None
-            if cell and is_cubic_cell(cell):
-                symmetry = "cubic"
-            phase = Phase(
+                symmetry = None
+                if cell and is_cubic_cell(cell):
+                    symmetry = "cubic"
+                phase = Phase(
                     name=phase_name,
                     source=file_path,
                     cell=cell,
                     hkl_list=hkl_list,
                     fixed_peaks=fixed_peaks,
                     color=color,
-                symmetry=symmetry,
+                    symmetry=symmetry,
                 )
             else:
                 rows, wavelength = parse_jcpds(file_path)
