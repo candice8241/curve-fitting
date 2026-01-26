@@ -19,8 +19,8 @@ import numpy as np
 from scipy.optimize import least_squares, nnls
 from scipy.special import wofz
 
-from PySide6 import QtCore, QtWidgets
-from PySide6.QtCore import Qt
+from PyQt6 import QtCore, QtWidgets
+from PyQt6.QtCore import Qt
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -622,7 +622,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         central = QtWidgets.QWidget(self)
         self.setCentralWidget(central)
 
-        splitter = QtWidgets.QSplitter(Qt.Horizontal, central)
+        splitter = QtWidgets.QSplitter(Qt.Orientation.Horizontal, central)
         layout = QtWidgets.QHBoxLayout(central)
         layout.addWidget(splitter)
 
@@ -651,9 +651,15 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.phase_table.setHorizontalHeaderLabels(
             ["Phase", "a", "b", "c", "alpha", "beta", "gamma", "Scale", "Use"]
         )
-        self.phase_table.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.Stretch)
-        self.phase_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
-        self.phase_table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        self.phase_table.horizontalHeader().setSectionResizeMode(
+            QtWidgets.QHeaderView.ResizeMode.Stretch
+        )
+        self.phase_table.setSelectionBehavior(
+            QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self.phase_table.setSelectionMode(
+            QtWidgets.QAbstractItemView.SelectionMode.SingleSelection
+        )
 
         phase_layout.addLayout(phase_buttons)
         phase_layout.addWidget(self.phase_table)
@@ -877,13 +883,13 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.phase_table.setRowCount(len(self.phases))
         for row, phase in enumerate(self.phases):
             name_item = QtWidgets.QTableWidgetItem(phase.name)
-            name_item.setFlags(name_item.flags() & ~Qt.ItemIsEditable)
+            name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.phase_table.setItem(row, 0, name_item)
 
             def set_cell(column: int, value: Optional[float]) -> None:
                 item = QtWidgets.QTableWidgetItem("N/A" if value is None else f"{value:.4f}")
                 if value is None:
-                    item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self.phase_table.setItem(row, column, item)
 
             if phase.cell:
@@ -902,9 +908,12 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
 
             use_item = QtWidgets.QTableWidgetItem("")
             use_item.setFlags(
-                (use_item.flags() & ~Qt.ItemIsEditable) | Qt.ItemIsUserCheckable
+                (use_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                | Qt.ItemFlag.ItemIsUserCheckable
             )
-            use_item.setCheckState(Qt.Checked if phase.visible else Qt.Unchecked)
+            use_item.setCheckState(
+                Qt.CheckState.Checked if phase.visible else Qt.CheckState.Unchecked
+            )
             self.phase_table.setItem(row, 8, use_item)
 
         self._table_updating = False
@@ -928,7 +937,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             return
 
         if column == 8:
-            phase.visible = item.checkState() == Qt.Checked
+            phase.visible = item.checkState() == Qt.CheckState.Checked
             self.update_pattern()
             return
 
@@ -1099,7 +1108,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             return calc - y
 
         self.set_status("Fitting... please wait.")
-        QtWidgets.QApplication.setOverrideCursor(Qt.WaitCursor)
+        QtWidgets.QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             result = least_squares(
                 residuals,
