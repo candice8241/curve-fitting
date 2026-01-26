@@ -667,9 +667,12 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
 
         controls = QtWidgets.QWidget()
         control_layout = QtWidgets.QVBoxLayout(controls)
+        control_layout.setContentsMargins(10, 10, 10, 10)
+        control_layout.setSpacing(12)
 
         data_group = QtWidgets.QGroupBox("Data")
         data_layout = QtWidgets.QVBoxLayout(data_group)
+        data_layout.setSpacing(6)
         self.data_label = QtWidgets.QLabel("No data loaded.")
         self.data_label.setWordWrap(True)
         self.load_data_button = QtWidgets.QPushButton("Load Data (.dat/.txt/.chi/.xy/.fxye)")
@@ -678,7 +681,9 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
 
         phase_group = QtWidgets.QGroupBox("Phases (CIF / JCPDS)")
         phase_layout = QtWidgets.QVBoxLayout(phase_group)
+        phase_layout.setSpacing(6)
         phase_buttons = QtWidgets.QHBoxLayout()
+        phase_buttons.setSpacing(6)
         self.load_phase_button = QtWidgets.QPushButton("Load CIF/JCPDS")
         self.remove_phase_button = QtWidgets.QPushButton("Remove Selected")
         self.clear_phases_button = QtWidgets.QPushButton("Clear Phases")
@@ -700,12 +705,20 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             QtWidgets.QAbstractItemView.SelectionMode.SingleSelection
         )
         self.phase_table.setAlternatingRowColors(True)
+        self.phase_table.setMinimumHeight(140)
+        self.phase_table.verticalHeader().setDefaultSectionSize(26)
 
         phase_layout.addLayout(phase_buttons)
         phase_layout.addWidget(self.phase_table)
 
         fit_group = QtWidgets.QGroupBox("Fit Settings")
         fit_layout = QtWidgets.QFormLayout(fit_group)
+        fit_layout.setHorizontalSpacing(10)
+        fit_layout.setVerticalSpacing(8)
+        fit_layout.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
+        fit_layout.setFieldGrowthPolicy(
+            QtWidgets.QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow
+        )
         self.method_combo = QtWidgets.QComboBox()
         self.method_combo.addItems(["Rietveld", "Pawley", "Le Bail"])
         self.profile_combo = QtWidgets.QComboBox()
@@ -784,7 +797,9 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
 
         background_group = QtWidgets.QGroupBox("Background")
         background_layout = QtWidgets.QVBoxLayout(background_group)
+        background_layout.setSpacing(6)
         bg_buttons = QtWidgets.QHBoxLayout()
+        bg_buttons.setSpacing(6)
         self.bg_pick_button = QtWidgets.QPushButton("Pick Background")
         self.bg_pick_button.setCheckable(True)
         self.bg_clear_button = QtWidgets.QPushButton("Clear Background")
@@ -795,12 +810,19 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.bg_points_label.setWordWrap(True)
         background_layout.addWidget(self.bg_points_label)
         bg_params = QtWidgets.QFormLayout()
+        bg_params.setHorizontalSpacing(10)
+        bg_params.setVerticalSpacing(8)
+        bg_params.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
+        bg_params.setFieldGrowthPolicy(
+            QtWidgets.QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow
+        )
         bg_params.addRow("Fallback b0", self.b0_spin)
         bg_params.addRow("Fallback b1", self.b1_spin)
         background_layout.addLayout(bg_params)
 
         action_group = QtWidgets.QGroupBox("Actions")
         action_layout = QtWidgets.QVBoxLayout(action_group)
+        action_layout.setSpacing(8)
         self.update_button = QtWidgets.QPushButton("Update Pattern")
         self.fit_button = QtWidgets.QPushButton("Fit (Least Squares)")
         self.save_plot_button = QtWidgets.QPushButton("Save Plot")
@@ -822,7 +844,11 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.toolbar = NavigationToolbar(self.plot_canvas, self)
         plot_layout.addWidget(self.toolbar)
         plot_layout.addWidget(self.plot_canvas)
-        splitter.addWidget(controls)
+        controls_scroll = QtWidgets.QScrollArea()
+        controls_scroll.setWidgetResizable(True)
+        controls_scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        controls_scroll.setWidget(controls)
+        splitter.addWidget(controls_scroll)
         splitter.addWidget(plot_container)
         splitter.setStretchFactor(1, 1)
 
