@@ -58,6 +58,7 @@ class Phase:
     generated_hkl: bool = False
     symmetry: Optional[str] = None
     centering: Optional[str] = None
+    profile_intensities: List[float] = field(default_factory=list)
 
 
 @dataclass
@@ -629,12 +630,57 @@ def compute_pattern(
     profile: ProfileParams,
     background: np.ndarray,
     zero_shift: float,
+    refresh_intensities: bool,
 ) -> Tuple[np.ndarray, np.ndarray, List[np.ndarray]]:
     usable_indices = [index for index, phase in enumerate(phases) if phase.peaks]
     usable_phases = [phases[index] for index in usable_indices]
     phase_patterns: List[np.ndarray] = [np.zeros_like(x) for _ in phases]
 
-    if method in ("Pawley", "Le Bail") and y_obs is not None and usable_phases:
+    if method in ("Pawley", "Le Bail") and usable_phases:
+        need_refresh = refresh_intensities
+        for phase_index in usable_indices:
+            phase = phases[phase_index]
+            if len(phase.profile_intensities) != len(phase.peaks):
+                need_refresh = True
+                break
+
+        if need_refresh and y_obs is not None:
+            centers: List[float] = []
+            for phase_index in usable_indices:
+                for center, _ in phases[phase_index].peaks:
+                    centers.append(center)
+            if not centers:
+                return background, background, phase_patterns
+            matrix = build_profile_matrix(x, centers, profile, zero_shift)
+            target = y_obs - background
+            target = np.clip(target, 0.0, None)
+            intensities, _ = nnls(matrix, target)
+            offset = 0
+            for phase_index in usable_indices:
+                count = len(phases[phase_index].peaks)
+                phases[phase_index].profile_intensities = (
+                    intensities[offset : offset + count].tolist() if count else []
+                )
+                offset += count
+
+        calc = background.copy()
+        for phase_index in usable_indices:
+            phase = phases[phase_index]
+            if not phase.peaks:
+                continue
+            intensities = phase.profile_intensities
+            if len(intensities) != len(phase.peaks):
+                intensities = [intensity for _, intensity in phase.peaks]
+                phase.profile_intensities = intensities
+            centers = [center for center, _ in phase.peaks]
+            matrix = build_profile_matrix(x, centers, profile, zero_shift)
+            phase_calc = matrix @ np.array(intensities, dtype=float)
+            phase_calc *= phase.scale
+            phase_patterns[phase_index] = phase_calc
+            calc += phase_calc
+        return calc, background, phase_patterns
+
+    if method in ("Pawley", "Le Bail") and y_obs is None and usable_phases:
         centers: List[float] = []
         for phase_index, phase in enumerate(usable_phases):
             for center, _ in phase.peaks:
@@ -939,6 +985,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self._dragging_phases: List[int] = []
         self._drag_start_cells: Dict[int, CellParameters] = {}
         self.calc_color = "#2563eb"
+        self._refresh_intensities = True
 
         self._table_updating = False
         self._dragging_phase: Optional[int] = None
@@ -1205,7 +1252,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.clear_phases_button.clicked.connect(self.clear_phases)
         self.phase_table.itemSelectionChanged.connect(self.on_phase_selection_changed)
         self.phase_table.cellChanged.connect(self.on_phase_cell_changed)
-        self.method_combo.currentTextChanged.connect(self.schedule_update)
+        self.method_combo.currentTextChanged.connect(self.on_method_changed)
         self.profile_combo.currentTextChanged.connect(self.update_profile)
         self.sigma_spin.valueChanged.connect(self.update_profile)
         self.gamma_spin.valueChanged.connect(self.update_profile)
@@ -1233,6 +1280,9 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
     def mark_peaks_dirty(self) -> None:
         self._peaks_dirty = True
 
+    def mark_intensities_dirty(self) -> None:
+        self._refresh_intensities = True
+
     def choose_calc_color(self) -> None:
         color = QtWidgets.QColorDialog.getColor(
             QtGui.QColor(self.calc_color), self, "Choose calc color"
@@ -1244,6 +1294,10 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.calc_color_button.setStyleSheet(
             f"background-color: {self.calc_color}; color: white;"
         )
+        self.schedule_update()
+
+    def on_method_changed(self, _method: str) -> None:
+        self._refresh_intensities = True
         self.schedule_update()
 
     def _apply_scheduled_update(self) -> None:
@@ -1266,6 +1320,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.background_points.clear()
         self._update_background_controls()
         self.set_status("Background points cleared.")
+        self._refresh_intensities = True
         self.schedule_update()
 
     def _update_background_controls(self) -> None:
@@ -1278,6 +1333,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.background_points.sort(key=lambda item: item[0])
         self._update_background_controls()
         self.set_status(f"Background points: {len(self.background_points)}")
+        self._refresh_intensities = True
         self.update_pattern()
 
     def _remove_background_point(self, x_val: float, y_val: float) -> None:
@@ -1298,6 +1354,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             self.background_points.pop(best_index)
             self._update_background_controls()
             self.set_status(f"Background points: {len(self.background_points)}")
+            self._refresh_intensities = True
             self.update_pattern()
 
     def load_data(self) -> None:
@@ -1320,6 +1377,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.b1_spin.setValue(0.0)
         self.background_points.clear()
         self._peaks_dirty = True
+        self._refresh_intensities = True
         self._last_view = None
         self._last_data_range = None
         self._update_background_controls()
@@ -1387,6 +1445,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
 
         self.phases.append(phase)
         self._peaks_dirty = True
+        self._refresh_intensities = True
         self.update_phase_table()
         self.refresh_phase_peaks()
         self.update_pattern()
@@ -1416,6 +1475,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             self.phases.pop(self.selected_phase_index)
         self.selected_phase_index = None
         self._peaks_dirty = True
+        self._refresh_intensities = True
         self.update_phase_table()
         self.refresh_phase_peaks()
         self.update_pattern()
@@ -1424,6 +1484,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.phases.clear()
         self.selected_phase_index = None
         self._peaks_dirty = True
+        self._refresh_intensities = True
         self.update_phase_table()
         self.update_pattern()
 
@@ -1624,6 +1685,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             gamma=self.gamma_spin.value(),
             eta=self.eta_spin.value(),
         )
+        self._refresh_intensities = True
         self.schedule_update()
 
     def update_pattern(self) -> None:
@@ -1675,7 +1737,9 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             self.profile_params,
             background,
             self.zero_shift,
+            self._refresh_intensities,
         )
+        self._refresh_intensities = False
         self.plot_canvas.render(
             self.data_x,
             self.data_y,
@@ -1777,6 +1841,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
                 self.profile_params,
                 background,
                 zero_shift,
+                True,
             )
             return calc - y
 
