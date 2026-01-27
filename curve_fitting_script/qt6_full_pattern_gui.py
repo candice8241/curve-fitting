@@ -754,7 +754,7 @@ class FitPlotCanvas(FigureCanvas):
         self.current_calc = None
         self.current_obs = None
         self.phase_lines: List[Tuple[int, object]] = []
-        self.calc_color = "#2563eb"
+        self.calc_color = "#ef4444"
         self.last_phase_patterns: List[np.ndarray] = []
         self.last_bkg: Optional[np.ndarray] = None
         self.last_calc: Optional[np.ndarray] = None
@@ -1003,7 +1003,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self._last_data_range = None
         self._dragging_phases: List[int] = []
         self._drag_start_cells: Dict[int, CellParameters] = {}
-        self.calc_color = "#2563eb"
+        self.calc_color = "#ef4444"
         self._refresh_intensities = True
         self._refine_pending = True
         self._panel_updating = False
@@ -1052,6 +1052,8 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         phase_buttons.setSpacing(6)
         self.load_phase_button = QtWidgets.QPushButton("Load")
         self.clear_phases_button = QtWidgets.QPushButton("Clear")
+        self.load_phase_button.setFixedWidth(90)
+        self.clear_phases_button.setFixedWidth(90)
         phase_buttons.addWidget(self.load_phase_button)
         phase_buttons.addWidget(self.clear_phases_button)
 
@@ -1068,10 +1070,13 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         )
         self.phase_table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
         self.phase_table.setAlternatingRowColors(True)
-        self.phase_table.setMinimumHeight(140)
-        self.phase_table.verticalHeader().setDefaultSectionSize(26)
-        self.phase_table.setColumnWidth(0, 200)
+        self.phase_table.setMinimumHeight(110)
+        self.phase_table.verticalHeader().setDefaultSectionSize(22)
+        self.phase_table.setColumnWidth(0, 160)
         self.phase_table.setColumnWidth(1, 28)
+        phase_font = self.phase_table.font()
+        phase_font.setPointSize(max(8, phase_font.pointSize() - 1))
+        self.phase_table.setFont(phase_font)
 
         phase_layout.addLayout(phase_buttons)
         phase_layout.addWidget(self.phase_table)
@@ -1139,6 +1144,8 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         )
         self.fit_profile_button = QtWidgets.QPushButton("Fit Profile")
         self.fit_profile_button.clicked.connect(self.fit_profile_parameters)
+        self.refine_cells_button = QtWidgets.QPushButton("Refine Cells")
+        self.refine_cells_button.clicked.connect(self.refine_cell_parameters)
         self.method_status_label = QtWidgets.QLabel("Le Bail refine: pending")
 
         self.sigma_spin = QtWidgets.QDoubleSpinBox()
@@ -1210,6 +1217,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         fit_layout.addRow("Profile", self.profile_combo)
         fit_layout.addRow("Calc color", self.calc_color_button)
         fit_layout.addRow("Fit profile", self.fit_profile_button)
+        fit_layout.addRow("Refine cells", self.refine_cells_button)
         fit_layout.addRow("Status", self.method_status_label)
         fit_layout.addRow("Sigma", self.sigma_spin)
         fit_layout.addRow("Gamma", self.gamma_spin)
@@ -1234,13 +1242,10 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.plot_bg_button.toggled.connect(self.toggle_background_pick)
         self.plot_bg_clear_button = QtWidgets.QPushButton("Clear BG")
         self.plot_bg_clear_button.clicked.connect(self.clear_background_points)
-        self.plot_coord_label = QtWidgets.QLabel("x=--, y=--")
-        self.plot_coord_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         toolbar_row.addWidget(self.toolbar)
         toolbar_row.addWidget(self.plot_bg_button)
         toolbar_row.addWidget(self.plot_bg_clear_button)
         toolbar_row.addStretch(1)
-        toolbar_row.addWidget(self.plot_coord_label)
         plot_layout.addLayout(toolbar_row)
         plot_layout.addWidget(self.plot_canvas)
         self.plot_canvas.calc_color = self.calc_color
@@ -1468,6 +1473,17 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
 
         self.mark_intensities_dirty()
         self.schedule_update()
+
+    def refine_cell_parameters(self) -> None:
+        if self.data_x is None or self.data_y is None or not self.phases:
+            return
+        method = self.method_combo.currentText()
+        if method in ("Le Bail", "Pawley"):
+            self.mark_intensities_dirty()
+            self._refine_pending = True
+            self.update_pattern()
+        else:
+            self.perform_fit()
 
     def on_method_changed(self, _method: str) -> None:
         self.mark_intensities_dirty()
@@ -2269,8 +2285,6 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             }
 
     def on_plot_motion(self, event) -> None:
-        if event.inaxes is not None and event.xdata is not None and event.ydata is not None:
-            self.plot_coord_label.setText(f"x={event.xdata:.4f}, y={event.ydata:.4f}")
         if self._dragging_phase is None or self._drag_anchor_x is None:
             return
         if event.inaxes != self.plot_canvas.axes_main or event.xdata is None:
