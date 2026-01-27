@@ -1259,7 +1259,13 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         plot_layout.addLayout(toolbar_row)
         plot_layout.addWidget(self.plot_canvas)
         self.plot_canvas.calc_color = self.calc_color
-        splitter.addWidget(controls)
+        controls_scroll = QtWidgets.QScrollArea()
+        controls_scroll.setWidgetResizable(True)
+        controls_scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        controls_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        controls_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        controls_scroll.setWidget(controls)
+        splitter.addWidget(controls_scroll)
         splitter.addWidget(plot_container)
         splitter.setStretchFactor(1, 1)
 
