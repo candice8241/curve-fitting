@@ -985,7 +985,8 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self._dragging_phases: List[int] = []
         self._drag_start_cells: Dict[int, CellParameters] = {}
         self.calc_color = "#2563eb"
-        self._refresh_intensities = True
+        self.mark_intensities_dirty()
+        self._refine_pending = True
 
         self._table_updating = False
         self._dragging_phase: Optional[int] = None
@@ -1282,6 +1283,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
 
     def mark_intensities_dirty(self) -> None:
         self._refresh_intensities = True
+        self._refine_pending = True
 
     def choose_calc_color(self) -> None:
         color = QtWidgets.QColorDialog.getColor(
@@ -1297,8 +1299,75 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.schedule_update()
 
     def on_method_changed(self, _method: str) -> None:
-        self._refresh_intensities = True
+        self.mark_intensities_dirty()
         self.schedule_update()
+
+    def refine_le_bail_cells(
+        self,
+        x: np.ndarray,
+        y: np.ndarray,
+        background: np.ndarray,
+        profile: ProfileParams,
+        zero_shift: float,
+    ) -> None:
+        param_map: List[Tuple[int, str]] = []
+        params: List[float] = []
+        lower: List[float] = []
+        upper: List[float] = []
+        for phase_index, phase in enumerate(self.phases):
+            if phase.cell is None:
+                continue
+            allowed = symmetry_allowed_params(phase.symmetry)
+            for name in ("a", "b", "c", "alpha", "beta", "gamma"):
+                if name not in allowed:
+                    continue
+                value = getattr(phase.cell, name)
+                params.append(value)
+                param_map.append((phase_index, name))
+                if name in ("a", "b", "c"):
+                    lower.append(value * 0.98)
+                    upper.append(value * 1.02)
+                else:
+                    lower.append(value - 2.0)
+                    upper.append(value + 2.0)
+        if not params:
+            return
+
+        two_theta_min = float(np.min(x))
+        two_theta_max = float(np.max(x))
+        wavelength = self.wavelength_spin.value()
+
+        def apply_params(vector: np.ndarray) -> None:
+            for value, (phase_index, name) in zip(vector, param_map):
+                phase = self.phases[phase_index]
+                if phase.cell is None:
+                    continue
+                setattr(phase.cell, name, float(value))
+                enforce_symmetry(phase.cell, phase.symmetry)
+            for phase in self.phases:
+                update_phase_peaks(phase, two_theta_min, two_theta_max, wavelength)
+
+        def residuals(vector: np.ndarray) -> np.ndarray:
+            apply_params(vector)
+            calc, _, _ = compute_pattern(
+                x,
+                y,
+                self.phases,
+                "Le Bail",
+                profile,
+                background,
+                zero_shift,
+                False,
+            )
+            return calc - y
+
+        result = least_squares(
+            residuals,
+            np.array(params, dtype=float),
+            bounds=(np.array(lower, dtype=float), np.array(upper, dtype=float)),
+            max_nfev=15,
+        )
+        apply_params(result.x)
 
     def _apply_scheduled_update(self) -> None:
         if not self._pending_update:
@@ -1320,7 +1389,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.background_points.clear()
         self._update_background_controls()
         self.set_status("Background points cleared.")
-        self._refresh_intensities = True
+        self.mark_intensities_dirty()
         self.schedule_update()
 
     def _update_background_controls(self) -> None:
@@ -1333,7 +1402,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.background_points.sort(key=lambda item: item[0])
         self._update_background_controls()
         self.set_status(f"Background points: {len(self.background_points)}")
-        self._refresh_intensities = True
+        self.mark_intensities_dirty()
         self.update_pattern()
 
     def _remove_background_point(self, x_val: float, y_val: float) -> None:
@@ -1354,7 +1423,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             self.background_points.pop(best_index)
             self._update_background_controls()
             self.set_status(f"Background points: {len(self.background_points)}")
-            self._refresh_intensities = True
+            self.mark_intensities_dirty()
             self.update_pattern()
 
     def load_data(self) -> None:
@@ -1377,7 +1446,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.b1_spin.setValue(0.0)
         self.background_points.clear()
         self._peaks_dirty = True
-        self._refresh_intensities = True
+        self.mark_intensities_dirty()
         self._last_view = None
         self._last_data_range = None
         self._update_background_controls()
@@ -1445,7 +1514,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
 
         self.phases.append(phase)
         self._peaks_dirty = True
-        self._refresh_intensities = True
+        self.mark_intensities_dirty()
         self.update_phase_table()
         self.refresh_phase_peaks()
         self.update_pattern()
@@ -1475,7 +1544,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             self.phases.pop(self.selected_phase_index)
         self.selected_phase_index = None
         self._peaks_dirty = True
-        self._refresh_intensities = True
+        self.mark_intensities_dirty()
         self.update_phase_table()
         self.refresh_phase_peaks()
         self.update_pattern()
@@ -1484,7 +1553,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.phases.clear()
         self.selected_phase_index = None
         self._peaks_dirty = True
-        self._refresh_intensities = True
+        self.mark_intensities_dirty()
         self.update_phase_table()
         self.update_pattern()
 
@@ -1685,7 +1754,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             gamma=self.gamma_spin.value(),
             eta=self.eta_spin.value(),
         )
-        self._refresh_intensities = True
+        self.mark_intensities_dirty()
         self.schedule_update()
 
     def update_pattern(self) -> None:
@@ -1729,17 +1798,52 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             slope = (y1 - y0) / (x1 - x0) if x1 != x0 else 0.0
             fallback = y0 + slope * (self.data_x - x0)
         background = interpolate_background(self.data_x, self.background_points, fallback)
-        calc, bkg, phase_patterns = compute_pattern(
-            self.data_x,
-            self.data_y,
-            self.phases,
-            method,
-            self.profile_params,
-            background,
-            self.zero_shift,
-            self._refresh_intensities,
-        )
-        self._refresh_intensities = False
+        if method == "Le Bail" and self.data_y is not None:
+            if self._refresh_intensities:
+                compute_pattern(
+                    self.data_x,
+                    self.data_y,
+                    self.phases,
+                    method,
+                    self.profile_params,
+                    background,
+                    self.zero_shift,
+                    True,
+                )
+                self._refresh_intensities = False
+                self._refine_pending = True
+            if self._refine_pending:
+                self.refine_le_bail_cells(
+                    self.data_x,
+                    self.data_y,
+                    background,
+                    self.profile_params,
+                    self.zero_shift,
+                )
+                self._refine_pending = False
+
+            calc, bkg, phase_patterns = compute_pattern(
+                self.data_x,
+                self.data_y,
+                self.phases,
+                method,
+                self.profile_params,
+                background,
+                self.zero_shift,
+                False,
+            )
+        else:
+            calc, bkg, phase_patterns = compute_pattern(
+                self.data_x,
+                self.data_y,
+                self.phases,
+                method,
+                self.profile_params,
+                background,
+                self.zero_shift,
+                self._refresh_intensities,
+            )
+            self._refresh_intensities = False
         self.plot_canvas.render(
             self.data_x,
             self.data_y,
