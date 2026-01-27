@@ -402,6 +402,90 @@ def is_cubic_cell(cell: CellParameters, tol: float = 1e-3) -> bool:
     )
 
 
+def detect_symmetry(cell: CellParameters, crystal_system: Optional[str]) -> str:
+    tol = 1e-3
+    if crystal_system:
+        system = crystal_system.lower()
+        if system in {"cubic", "tetragonal", "orthorhombic", "monoclinic", "triclinic"}:
+            return system
+        if system == "hexagonal":
+            return "hexagonal"
+        if system == "trigonal":
+            if (
+                abs(cell.a - cell.b) <= tol
+                and abs(cell.b - cell.c) <= tol
+                and abs(cell.alpha - cell.beta) <= tol
+                and abs(cell.beta - cell.gamma) <= tol
+                and abs(cell.alpha - 90.0) > 1.0
+            ):
+                return "rhombohedral"
+            if abs(cell.gamma - 120.0) <= 2.0 and abs(cell.alpha - 90.0) <= 2.0 and abs(cell.beta - 90.0) <= 2.0:
+                return "hexagonal"
+            return "rhombohedral"
+
+    if is_cubic_cell(cell, tol=tol):
+        return "cubic"
+    if abs(cell.a - cell.b) <= tol and abs(cell.alpha - 90.0) <= tol and abs(cell.beta - 90.0) <= tol and abs(cell.gamma - 90.0) <= tol:
+        return "tetragonal"
+    if abs(cell.a - cell.b) <= tol and abs(cell.alpha - 90.0) <= tol and abs(cell.beta - 90.0) <= tol and abs(cell.gamma - 120.0) <= 2.0:
+        return "hexagonal"
+    if abs(cell.alpha - 90.0) <= tol and abs(cell.beta - 90.0) <= tol and abs(cell.gamma - 90.0) <= tol:
+        return "orthorhombic"
+    if abs(cell.alpha - 90.0) <= tol and abs(cell.gamma - 90.0) <= tol:
+        return "monoclinic"
+    if abs(cell.a - cell.b) <= tol and abs(cell.b - cell.c) <= tol and abs(cell.alpha - cell.beta) <= tol and abs(cell.beta - cell.gamma) <= tol:
+        if abs(cell.alpha - 90.0) > 1.0:
+            return "rhombohedral"
+    return "triclinic"
+
+
+def enforce_symmetry(cell: CellParameters, symmetry: Optional[str]) -> None:
+    if symmetry == "cubic":
+        cell.b = cell.a
+        cell.c = cell.a
+        cell.alpha = 90.0
+        cell.beta = 90.0
+        cell.gamma = 90.0
+    elif symmetry == "tetragonal":
+        cell.b = cell.a
+        cell.alpha = 90.0
+        cell.beta = 90.0
+        cell.gamma = 90.0
+    elif symmetry == "hexagonal":
+        cell.b = cell.a
+        cell.alpha = 90.0
+        cell.beta = 90.0
+        cell.gamma = 120.0
+    elif symmetry == "orthorhombic":
+        cell.alpha = 90.0
+        cell.beta = 90.0
+        cell.gamma = 90.0
+    elif symmetry == "monoclinic":
+        cell.alpha = 90.0
+        cell.gamma = 90.0
+    elif symmetry == "rhombohedral":
+        cell.b = cell.a
+        cell.c = cell.a
+        cell.beta = cell.alpha
+        cell.gamma = cell.alpha
+
+
+def symmetry_allowed_params(symmetry: Optional[str]) -> set:
+    if symmetry == "cubic":
+        return {"a"}
+    if symmetry in {"tetragonal", "hexagonal"}:
+        return {"a", "c"}
+    if symmetry == "orthorhombic":
+        return {"a", "b", "c"}
+    if symmetry == "monoclinic":
+        return {"a", "b", "c", "beta"}
+    if symmetry == "rhombohedral":
+        return {"a", "alpha"}
+    if symmetry == "triclinic":
+        return {"a", "b", "c", "alpha", "beta", "gamma"}
+    return {"a", "b", "c", "alpha", "beta", "gamma"}
+
+
 def generate_hkl_list(
     cell: CellParameters,
     two_theta_min: float,
@@ -931,7 +1015,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.wavelength_spin = QtWidgets.QDoubleSpinBox()
         self.wavelength_spin.setRange(0.1, 3.0)
         self.wavelength_spin.setDecimals(5)
-        self.wavelength_spin.setValue(0.41)
+        self.wavelength_spin.setValue(0.41328)
         self.wavelength_spin.setSingleStep(0.0005)
         self.wavelength_spin.setStepType(
             QtWidgets.QAbstractSpinBox.StepType.AdaptiveDecimalStepType
@@ -1196,8 +1280,9 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
                 cell, hkl_list, fixed_peaks = parse_cif(file_path, wavelength=wavelength)
                 crystal_system, centering, _ = extract_cif_symmetry(file_path)
                 symmetry = None
-                if crystal_system == "cubic" or (cell and is_cubic_cell(cell)):
-                    symmetry = "cubic"
+                if cell:
+                    symmetry = detect_symmetry(cell, crystal_system)
+                    enforce_symmetry(cell, symmetry)
                 phase = Phase(
                     name=phase_name,
                     source=file_path,
@@ -1296,16 +1381,13 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
                 self.phase_table.setItem(row, column, item)
 
             if phase.cell:
+                allowed = symmetry_allowed_params(phase.symmetry)
                 set_cell(1, phase.cell.a)
-                if phase.symmetry == "cubic":
-                    for col in (2, 3, 4, 5, 6):
-                        set_cell(col, None, editable=False, display="-")
-                else:
-                    set_cell(2, phase.cell.b)
-                    set_cell(3, phase.cell.c)
-                    set_cell(4, phase.cell.alpha)
-                    set_cell(5, phase.cell.beta)
-                    set_cell(6, phase.cell.gamma)
+                set_cell(2, phase.cell.b, editable="b" in allowed, display=None if "b" in allowed else "-")
+                set_cell(3, phase.cell.c, editable="c" in allowed, display=None if "c" in allowed else "-")
+                set_cell(4, phase.cell.alpha, editable="alpha" in allowed, display=None if "alpha" in allowed else "-")
+                set_cell(5, phase.cell.beta, editable="beta" in allowed, display=None if "beta" in allowed else "-")
+                set_cell(6, phase.cell.gamma, editable="gamma" in allowed, display=None if "gamma" in allowed else "-")
             else:
                 for col in range(1, 7):
                     set_cell(col, None)
@@ -1346,6 +1428,13 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         if phase.cell is None:
             return
 
+        param_by_col = {1: "a", 2: "b", 3: "c", 4: "alpha", 5: "beta", 6: "gamma"}
+        param_name = param_by_col.get(column)
+        allowed = symmetry_allowed_params(phase.symmetry)
+        if param_name not in allowed:
+            self.update_phase_table()
+            return
+
         value = parse_numeric(item.text())
         if value is None:
             self.set_status("Invalid cell parameter.")
@@ -1354,37 +1443,17 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
 
         if column == 1:
             phase.cell.a = float(value)
-            if phase.symmetry == "cubic":
-                phase.cell.b = phase.cell.a
-                phase.cell.c = phase.cell.a
-                phase.cell.alpha = 90.0
-                phase.cell.beta = 90.0
-                phase.cell.gamma = 90.0
         elif column == 2:
-            if phase.symmetry == "cubic":
-                self.update_phase_table()
-                return
             phase.cell.b = float(value)
         elif column == 3:
-            if phase.symmetry == "cubic":
-                self.update_phase_table()
-                return
             phase.cell.c = float(value)
         elif column == 4:
-            if phase.symmetry == "cubic":
-                self.update_phase_table()
-                return
             phase.cell.alpha = float(value)
         elif column == 5:
-            if phase.symmetry == "cubic":
-                self.update_phase_table()
-                return
             phase.cell.beta = float(value)
         elif column == 6:
-            if phase.symmetry == "cubic":
-                self.update_phase_table()
-                return
             phase.cell.gamma = float(value)
+        enforce_symmetry(phase.cell, phase.symmetry)
         self._peaks_dirty = True
         self.refresh_phase_peaks()
         self.schedule_update()
@@ -1680,6 +1749,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             phase.cell.a = start_cell.a * scale
             phase.cell.b = start_cell.b * scale
             phase.cell.c = start_cell.c * scale
+            enforce_symmetry(phase.cell, phase.symmetry)
         self.update_phase_table()
         self.refresh_phase_peaks()
         self.schedule_update()
