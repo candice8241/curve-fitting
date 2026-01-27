@@ -630,7 +630,9 @@ def compute_pattern(
     background: np.ndarray,
     zero_shift: float,
 ) -> Tuple[np.ndarray, np.ndarray, List[np.ndarray]]:
-    usable_phases = [phase for phase in phases if phase.peaks]
+    usable_indices = [index for index, phase in enumerate(phases) if phase.peaks]
+    usable_phases = [phases[index] for index in usable_indices]
+    phase_patterns: List[np.ndarray] = [np.zeros_like(x) for _ in phases]
 
     if method in ("Pawley", "Le Bail") and y_obs is not None and usable_phases:
         centers: List[float] = []
@@ -638,34 +640,34 @@ def compute_pattern(
             for center, _ in phase.peaks:
                 centers.append(center)
         if not centers:
-            return background, background, []
+            return background, background, phase_patterns
         matrix = build_profile_matrix(x, centers, profile, zero_shift)
         target = y_obs - background
         target = np.clip(target, 0.0, None)
         intensities, _ = nnls(matrix, target)
-        phase_patterns: List[np.ndarray] = [np.zeros_like(x) for _ in usable_phases]
         offset = 0
-        for phase_index, phase in enumerate(usable_phases):
-            count = len(phase.peaks)
+        for local_index, phase_index in enumerate(usable_indices):
+            count = len(phases[phase_index].peaks)
             if count:
                 phase_patterns[phase_index] = matrix[:, offset : offset + count] @ intensities[
                     offset : offset + count
                 ]
             offset += count
         calc = background.copy()
-        for phase_index, phase in enumerate(usable_phases):
-            phase_patterns[phase_index] *= phase.scale
+        for phase_index in usable_indices:
+            phase_patterns[phase_index] *= phases[phase_index].scale
             calc += phase_patterns[phase_index]
         return calc, background, phase_patterns
 
-    phase_patterns = []
     calc = background.copy()
-    for phase in usable_phases:
+    for phase_index, phase in enumerate(phases):
+        if not phase.peaks:
+            continue
         phase_calc = np.zeros_like(x)
         for center, intensity in phase.peaks:
             phase_calc += intensity * profile_function(x, center + zero_shift, profile)
         phase_calc *= phase.scale
-        phase_patterns.append(phase_calc)
+        phase_patterns[phase_index] = phase_calc
         calc += phase_calc
     return calc, background, phase_patterns
 
@@ -692,6 +694,7 @@ class FitPlotCanvas(FigureCanvas):
         self.current_x = None
         self.current_calc = None
         self.current_obs = None
+        self.phase_lines: List[Tuple[int, object]] = []
         self.base_xlim = None
         self.base_ylim_main = None
         self.base_ylim_diff = None
@@ -748,17 +751,30 @@ class FitPlotCanvas(FigureCanvas):
         axis.set_ylim(y_low, y_high)
         self.draw_idle()
 
-    def is_over_calc_line(self, event) -> bool:
-        if self.calc_line is None or self.current_x is None or self.current_calc is None:
-            return False
+    def pick_phase_at(self, event) -> Optional[int]:
         if event.xdata is None or event.ydata is None:
-            return False
-        if self.calc_line.contains(event)[0]:
-            return True
-        index = int(np.clip(np.searchsorted(self.current_x, event.xdata), 0, len(self.current_x) - 1))
-        y_val = float(self.current_calc[index])
-        y_range = float(np.ptp(self.current_calc)) or 1.0
-        return abs(event.ydata - y_val) / y_range <= 0.1
+            return None
+        for phase_index, line in self.phase_lines:
+            if line.contains(event)[0]:
+                return phase_index
+
+        best_index = None
+        best_score = None
+        for phase_index, line in self.phase_lines:
+            x_data = line.get_xdata()
+            y_data = line.get_ydata()
+            if len(x_data) == 0:
+                continue
+            idx = int(np.clip(np.searchsorted(x_data, event.xdata), 0, len(x_data) - 1))
+            y_val = float(y_data[idx])
+            y_range = float(np.ptp(y_data)) or 1.0
+            score = abs(event.ydata - y_val) / y_range
+            if best_score is None or score < best_score:
+                best_score = score
+                best_index = phase_index
+        if best_score is not None and best_score <= 0.12:
+            return best_index
+        return None
 
     def render(
         self,
@@ -766,6 +782,7 @@ class FitPlotCanvas(FigureCanvas):
         y_obs: Optional[np.ndarray],
         y_calc: Optional[np.ndarray],
         y_bkg: Optional[np.ndarray],
+        phase_patterns: List[np.ndarray],
         background_points: List[Tuple[float, float]],
         phases: List[Phase],
         selected_index: Optional[int],
@@ -774,6 +791,7 @@ class FitPlotCanvas(FigureCanvas):
         self.axes_diff.clear()
         self.calc_line = None
         self.background_markers = None
+        self.phase_lines = []
         self.current_x = x
         self.current_calc = y_calc
         self.current_obs = y_obs
@@ -798,6 +816,23 @@ class FitPlotCanvas(FigureCanvas):
         )[0]
         self.calc_line.set_picker(5)
         self.calc_line.set_pickradius(8)
+
+        for phase_index, phase in enumerate(phases):
+            if phase_index >= len(phase_patterns):
+                continue
+            pattern = phase_patterns[phase_index]
+            if pattern is None or not np.any(pattern):
+                continue
+            phase_line = self.axes_main.plot(
+                x,
+                pattern,
+                color=phase.color,
+                linewidth=1.1,
+                alpha=0.7,
+                label="_nolegend_",
+            )[0]
+            phase_line.set_picker(6)
+            self.phase_lines.append((phase_index, phase_line))
         if y_bkg is not None:
             self.axes_main.plot(x, y_bkg, color="#94a3b8", linewidth=1.2, label="bkg")
 
@@ -963,6 +998,11 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         )
         self.phase_table.setSelectionMode(
             QtWidgets.QAbstractItemView.SelectionMode.SingleSelection
+        )
+        self.phase_table.setEditTriggers(
+            QtWidgets.QAbstractItemView.EditTrigger.DoubleClicked
+            | QtWidgets.QAbstractItemView.EditTrigger.SelectedClicked
+            | QtWidgets.QAbstractItemView.EditTrigger.EditKeyPressed
         )
         self.phase_table.setAlternatingRowColors(True)
         self.phase_table.setMinimumHeight(140)
@@ -1483,7 +1523,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
     def update_pattern(self) -> None:
         if self.data_x is None:
             self.plot_canvas.render(
-                None, None, None, None, [], self.phases, self.selected_phase_index
+                None, None, None, None, [], [], self.phases, self.selected_phase_index
             )
             return
         self._pending_update = False
@@ -1521,7 +1561,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             slope = (y1 - y0) / (x1 - x0) if x1 != x0 else 0.0
             fallback = y0 + slope * (self.data_x - x0)
         background = interpolate_background(self.data_x, self.background_points, fallback)
-        calc, bkg, _ = compute_pattern(
+        calc, bkg, phase_patterns = compute_pattern(
             self.data_x,
             self.data_y,
             self.phases,
@@ -1535,6 +1575,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             self.data_y,
             calc,
             bkg,
+            phase_patterns,
             self.background_points,
             self.phases,
             self.selected_phase_index,
@@ -1685,29 +1726,28 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             elif event.button == 3:
                 self._remove_background_point(event.xdata, event.ydata)
             return
-        if self.selected_phase_index is None and len(self.phases) == 1:
-            self.phase_table.selectRow(0)
-            self.selected_phase_index = 0
-        if self.selected_phase_index is None:
-            self._dragging_phases = [
-                idx for idx, phase in enumerate(self.phases) if phase.cell is not None
-            ]
-            if not self._dragging_phases:
-                self.set_status("No lattice parameters available for dragging.")
+        picked_index = self.plot_canvas.pick_phase_at(event)
+        if picked_index is None:
+            if len(self.phases) == 1:
+                picked_index = 0
+            else:
+                self.set_status("Click a phase curve to move it.")
                 return
-        else:
-            if not (0 <= self.selected_phase_index < len(self.phases)):
-                return
-            phase = self.phases[self.selected_phase_index]
-            if phase.cell is None:
-                self.set_status("Selected phase has no lattice parameters to adjust.")
-                return
-            self._dragging_phases = [self.selected_phase_index]
+
+        if not (0 <= picked_index < len(self.phases)):
+            return
+        phase = self.phases[picked_index]
+        if phase.cell is None:
+            self.set_status("Selected phase has no lattice parameters to adjust.")
+            return
+        self.selected_phase_index = picked_index
+        self.phase_table.selectRow(picked_index)
+        self._dragging_phases = [picked_index]
         if event.xdata is None:
             return
         if event.button != 1:
             return
-        if self.plot_canvas.calc_line is None:
+        if not self.plot_canvas.phase_lines:
             return
         self._dragging_phase = self.selected_phase_index if self.selected_phase_index is not None else -1
         self._drag_anchor_x = float(event.xdata)
