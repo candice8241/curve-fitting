@@ -1003,6 +1003,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self._refresh_intensities = True
         self._refine_pending = True
         self._panel_updating = False
+        self._background_preview = False
 
         self._table_updating = False
         self._dragging_phase: Optional[int] = None
@@ -1046,14 +1047,12 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         phase_buttons = QtWidgets.QHBoxLayout()
         phase_buttons.setSpacing(6)
         self.load_phase_button = QtWidgets.QPushButton("Load CIF/JCPDS")
-        self.remove_phase_button = QtWidgets.QPushButton("Remove Selected")
         self.clear_phases_button = QtWidgets.QPushButton("Clear Phases")
         phase_buttons.addWidget(self.load_phase_button)
-        phase_buttons.addWidget(self.remove_phase_button)
         phase_buttons.addWidget(self.clear_phases_button)
 
-        self.phase_table = QtWidgets.QTableWidget(0, 1)
-        self.phase_table.setHorizontalHeaderLabels(["Phase"])
+        self.phase_table = QtWidgets.QTableWidget(0, 2)
+        self.phase_table.setHorizontalHeaderLabels(["Phase", ""])
         self.phase_table.horizontalHeader().setSectionResizeMode(
             QtWidgets.QHeaderView.ResizeMode.Stretch
         )
@@ -1068,6 +1067,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.phase_table.setMinimumHeight(140)
         self.phase_table.verticalHeader().setDefaultSectionSize(26)
         self.phase_table.setColumnWidth(0, 200)
+        self.phase_table.setColumnWidth(1, 28)
 
         phase_layout.addLayout(phase_buttons)
         phase_layout.addWidget(self.phase_table)
@@ -1229,7 +1229,14 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         plot_layout.setContentsMargins(4, 4, 4, 4)
         self.plot_canvas = FitPlotCanvas(plot_container)
         self.toolbar = NavigationToolbar(self.plot_canvas, self)
-        plot_layout.addWidget(self.toolbar)
+        toolbar_row = QtWidgets.QHBoxLayout()
+        self.plot_bg_button = QtWidgets.QPushButton("Add Background Point")
+        self.plot_bg_button.setCheckable(True)
+        self.plot_bg_button.toggled.connect(self.toggle_background_pick)
+        toolbar_row.addWidget(self.plot_bg_button)
+        toolbar_row.addStretch(1)
+        toolbar_row.addWidget(self.toolbar)
+        plot_layout.addLayout(toolbar_row)
         plot_layout.addWidget(self.plot_canvas)
         self.plot_canvas.calc_color = self.calc_color
         controls_scroll = QtWidgets.QScrollArea()
@@ -1275,6 +1282,10 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
                 border: 1px solid #dbeafe;
                 alternate-background-color: #eff6ff;
             }
+            QTableWidget::item:selected {
+                background-color: rgba(59, 130, 246, 80);
+                color: #0f172a;
+            }
             QHeaderView::section {
                 background: #e0edff;
                 color: #1e3a8a;
@@ -1295,7 +1306,6 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
     def _connect_signals(self) -> None:
         self.load_data_button.clicked.connect(self.load_data)
         self.load_phase_button.clicked.connect(self.load_phase)
-        self.remove_phase_button.clicked.connect(self.remove_selected_phase)
         self.clear_phases_button.clicked.connect(self.clear_phases)
         self.phase_table.itemSelectionChanged.connect(self.on_phase_selection_changed)
         self.phase_table.cellChanged.connect(self.on_phase_cell_changed)
@@ -1430,9 +1440,20 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             self.plot_canvas.setCursor(Qt.CursorShape.CrossCursor)
             self.set_status("Background pick: left-click add, right-click remove.")
             self.bg_pick_button.setText("Picking Background")
+            self.plot_bg_button.setText("Picking Background")
+            self._background_preview = True
         else:
             self.plot_canvas.setCursor(Qt.CursorShape.ArrowCursor)
             self.bg_pick_button.setText("Pick Background")
+            self.plot_bg_button.setText("Add Background Point")
+            if self._background_preview:
+                self._background_preview = False
+                self.mark_intensities_dirty()
+                self.schedule_update()
+        if self.bg_pick_button.isChecked() != enabled:
+            self.bg_pick_button.setChecked(enabled)
+        if self.plot_bg_button.isChecked() != enabled:
+            self.plot_bg_button.setChecked(enabled)
 
     def clear_background_points(self) -> None:
         self.background_points.clear()
@@ -1451,7 +1472,8 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.background_points.sort(key=lambda item: item[0])
         self._update_background_controls()
         self.set_status(f"Background points: {len(self.background_points)}")
-        self.mark_intensities_dirty()
+        if not self._background_preview:
+            self.mark_intensities_dirty()
         self.update_pattern()
 
     def _remove_background_point(self, x_val: float, y_val: float) -> None:
@@ -1472,7 +1494,8 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             self.background_points.pop(best_index)
             self._update_background_controls()
             self.set_status(f"Background points: {len(self.background_points)}")
-            self.mark_intensities_dirty()
+            if not self._background_preview:
+                self.mark_intensities_dirty()
             self.update_pattern()
 
     def load_data(self) -> None:
@@ -1598,6 +1621,19 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.refresh_phase_peaks()
         self.update_pattern()
 
+    def remove_phase_at(self, index: int) -> None:
+        if 0 <= index < len(self.phases):
+            self.phases.pop(index)
+        if self.selected_phase_index == index:
+            self.selected_phase_index = None
+        elif self.selected_phase_index is not None and self.selected_phase_index > index:
+            self.selected_phase_index -= 1
+        self._peaks_dirty = True
+        self.mark_intensities_dirty()
+        self.update_phase_table()
+        self.refresh_phase_peaks()
+        self.update_pattern()
+
     def clear_phases(self) -> None:
         self.phases.clear()
         self.selected_phase_index = None
@@ -1614,6 +1650,13 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             name_item.setForeground(QtGui.QBrush(QtGui.QColor(phase.color)))
             self.phase_table.setItem(row, 0, name_item)
+            delete_button = QtWidgets.QPushButton("×")
+            delete_button.setFixedWidth(22)
+            delete_button.setStyleSheet("background-color: #f87171; color: white;")
+            delete_button.clicked.connect(
+                lambda _checked=False, r=row: self.remove_phase_at(r)
+            )
+            self.phase_table.setCellWidget(row, 1, delete_button)
 
         self._table_updating = False
         if self.selected_phase_index is not None:
@@ -1861,7 +1904,10 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             fallback = y0 + slope * (self.data_x - x0)
         background = interpolate_background(self.data_x, self.background_points, fallback)
         if method == "Le Bail" and self.data_y is not None:
-            self.method_status_label.setText("Le Bail refine: running")
+            if self._background_preview:
+                self.method_status_label.setText("Le Bail refine: paused (picking)")
+            else:
+                self.method_status_label.setText("Le Bail refine: running")
             if self._refresh_intensities:
                 compute_pattern(
                     self.data_x,
@@ -1875,7 +1921,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
                 )
                 self._refresh_intensities = False
                 self._refine_pending = True
-            if self._refine_pending:
+            if self._refine_pending and not self._background_preview:
                 max_change = self.refine_le_bail_cells(
                     self.data_x,
                     self.data_y,
@@ -1899,7 +1945,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
                 self.zero_shift,
                 False,
             )
-            if "done" not in self.method_status_label.text():
+            if "done" not in self.method_status_label.text() and not self._background_preview:
                 self.method_status_label.setText("Le Bail refine: done")
         else:
             self.method_status_label.setText(f"Method: {method}")
