@@ -57,6 +57,7 @@ class Phase:
     color: str = "#2563eb"
     generated_hkl: bool = False
     symmetry: Optional[str] = None
+    centering: Optional[str] = None
 
 
 @dataclass
@@ -273,6 +274,38 @@ def parse_jcpds(path: str) -> Tuple[List[Tuple[float, float]], Optional[float]]:
     return rows, wavelength
 
 
+def extract_cif_symmetry(path: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    crystal_system = None
+    hm_name = None
+    with open(path, "r", encoding="latin1") as handle:
+        for line in handle:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            lower = stripped.lower()
+            if lower.startswith("_space_group_name_h-m_alt") or lower.startswith(
+                "_symmetry_space_group_name_h-m"
+            ):
+                parts = stripped.split(None, 1)
+                if len(parts) > 1:
+                    hm_name = parts[1].strip().strip("'\"")
+            elif lower.startswith("_space_group_crystal_system") or lower.startswith(
+                "_symmetry_cell_setting"
+            ) or lower.startswith("_space_group.crystal_system"):
+                parts = stripped.split(None, 1)
+                if len(parts) > 1:
+                    crystal_system = parts[1].strip().strip("'\"").lower()
+
+    centering = None
+    if hm_name:
+        first = hm_name.strip()
+        if first:
+            token = first[0].upper()
+            if token in ("P", "I", "F", "C", "A", "B", "R"):
+                centering = token
+    return crystal_system, centering, hm_name
+
+
 def hkl_multiplicity(h: int, k: int, l: int) -> int:
     values = [abs(h), abs(k), abs(l)]
     nonzero = sum(1 for value in values if value != 0)
@@ -283,6 +316,23 @@ def hkl_multiplicity(h: int, k: int, l: int) -> int:
     for count in unique_counts.values():
         permutations //= math.factorial(count)
     return permutations * (2 ** nonzero)
+
+
+def hkl_allowed(h: int, k: int, l: int, centering: Optional[str]) -> bool:
+    if centering is None:
+        return True
+    centering = centering.upper()
+    if centering == "F":
+        return (h % 2 == k % 2) and (k % 2 == l % 2)
+    if centering == "I":
+        return (h + k + l) % 2 == 0
+    if centering == "C":
+        return (h + k) % 2 == 0
+    if centering == "A":
+        return (k + l) % 2 == 0
+    if centering == "B":
+        return (h + l) % 2 == 0
+    return True
 
 
 def cell_to_metric_inverse(cell: CellParameters) -> np.ndarray:
@@ -446,6 +496,8 @@ def update_phase_peaks(
             )
             phase.generated_hkl = True
         for h, k, l, intensity in phase.hkl_list:
+            if not hkl_allowed(h, k, l, phase.centering):
+                continue
             d_spacing = d_spacing_from_hkl(h, k, l, phase.cell)
             if d_spacing is None:
                 continue
@@ -622,7 +674,7 @@ class FitPlotCanvas(FigureCanvas):
         index = int(np.clip(np.searchsorted(self.current_x, event.xdata), 0, len(self.current_x) - 1))
         y_val = float(self.current_calc[index])
         y_range = float(np.ptp(self.current_calc)) or 1.0
-        return abs(event.ydata - y_val) / y_range <= 0.03
+        return abs(event.ydata - y_val) / y_range <= 0.1
 
     def render(
         self,
@@ -879,7 +931,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.wavelength_spin = QtWidgets.QDoubleSpinBox()
         self.wavelength_spin.setRange(0.1, 3.0)
         self.wavelength_spin.setDecimals(5)
-        self.wavelength_spin.setValue(1.5406)
+        self.wavelength_spin.setValue(0.41)
         self.wavelength_spin.setSingleStep(0.0005)
         self.wavelength_spin.setStepType(
             QtWidgets.QAbstractSpinBox.StepType.AdaptiveDecimalStepType
@@ -1142,8 +1194,9 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             if extension == ".cif":
                 wavelength = self.wavelength_spin.value()
                 cell, hkl_list, fixed_peaks = parse_cif(file_path, wavelength=wavelength)
+                crystal_system, centering, _ = extract_cif_symmetry(file_path)
                 symmetry = None
-                if cell and is_cubic_cell(cell):
+                if crystal_system == "cubic" or (cell and is_cubic_cell(cell)):
                     symmetry = "cubic"
                 phase = Phase(
                     name=phase_name,
@@ -1153,6 +1206,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
                     fixed_peaks=fixed_peaks,
                     color=color,
                     symmetry=symmetry,
+                    centering=centering,
                 )
             else:
                 rows, wavelength = parse_jcpds(file_path)
@@ -1229,24 +1283,29 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             name_item.setForeground(QtGui.QBrush(QtGui.QColor(phase.color)))
             self.phase_table.setItem(row, 0, name_item)
 
-            def set_cell(column: int, value: Optional[float]) -> None:
-                item = QtWidgets.QTableWidgetItem("N/A" if value is None else f"{value:.4f}")
-                if value is None:
+            def set_cell(column: int, value: Optional[float], editable: bool = True, display: Optional[str] = None) -> None:
+                if display is not None:
+                    text = display
+                elif value is None:
+                    text = "N/A"
+                else:
+                    text = f"{value:.4f}"
+                item = QtWidgets.QTableWidgetItem(text)
+                if value is None or not editable:
                     item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self.phase_table.setItem(row, column, item)
 
             if phase.cell:
                 set_cell(1, phase.cell.a)
-                set_cell(2, phase.cell.b)
-                set_cell(3, phase.cell.c)
-                set_cell(4, phase.cell.alpha)
-                set_cell(5, phase.cell.beta)
-                set_cell(6, phase.cell.gamma)
                 if phase.symmetry == "cubic":
                     for col in (2, 3, 4, 5, 6):
-                        item = self.phase_table.item(row, col)
-                        if item is not None:
-                            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                        set_cell(col, None, editable=False, display="-")
+                else:
+                    set_cell(2, phase.cell.b)
+                    set_cell(3, phase.cell.c)
+                    set_cell(4, phase.cell.alpha)
+                    set_cell(5, phase.cell.beta)
+                    set_cell(6, phase.cell.gamma)
             else:
                 for col in range(1, 7):
                     set_cell(col, None)
