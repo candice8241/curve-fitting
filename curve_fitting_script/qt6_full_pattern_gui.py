@@ -1237,10 +1237,6 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         plot_container = QtWidgets.QWidget()
         plot_layout = QtWidgets.QVBoxLayout(plot_container)
         plot_layout.setContentsMargins(4, 4, 4, 4)
-        self.plot_file_label = QtWidgets.QLabel("Data: (none)")
-        self.plot_file_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.plot_file_label.setStyleSheet("color: #1e3a8a; font-weight: 600;")
-        plot_layout.addWidget(self.plot_file_label)
         self.plot_canvas = FitPlotCanvas(plot_container)
         self.toolbar = NavigationToolbar(self.plot_canvas, self)
         toolbar_row = QtWidgets.QHBoxLayout()
@@ -1249,14 +1245,20 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.plot_bg_button.toggled.connect(self.toggle_background_pick)
         self.plot_bg_clear_button = QtWidgets.QPushButton("Clear BG")
         self.plot_bg_clear_button.clicked.connect(self.clear_background_points)
+        self.plot_coord_label = QtWidgets.QLabel("x=--, y=--")
+        self.plot_coord_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         toolbar_row.addWidget(self.toolbar)
         toolbar_row.addWidget(self.plot_bg_button)
         toolbar_row.addWidget(self.plot_bg_clear_button)
         toolbar_row.addStretch(1)
-        if hasattr(self.toolbar, "locLabel"):
-            self.toolbar.locLabel.setVisible(True)
-            toolbar_row.addWidget(self.toolbar.locLabel)
+        toolbar_row.addWidget(self.plot_coord_label)
         plot_layout.addLayout(toolbar_row)
+        if hasattr(self.toolbar, "locLabel"):
+            self.toolbar.locLabel.setVisible(False)
+        self.plot_file_label = QtWidgets.QLabel("Data: (none)")
+        self.plot_file_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.plot_file_label.setStyleSheet("color: #1e3a8a; font-weight: 600;")
+        plot_layout.addWidget(self.plot_file_label)
         plot_layout.addWidget(self.plot_canvas)
         self.plot_canvas.calc_color = self.calc_color
         controls_scroll = QtWidgets.QScrollArea()
@@ -2296,6 +2298,11 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             }
 
     def on_plot_motion(self, event) -> None:
+        if hasattr(self, "plot_coord_label"):
+            if event.inaxes is not None and event.xdata is not None and event.ydata is not None:
+                self.plot_coord_label.setText(f"x={event.xdata:.4f}, y={event.ydata:.4f}")
+            else:
+                self.plot_coord_label.setText("x=--, y=--")
         if self._dragging_phase is None or self._drag_anchor_x is None:
             return
         if event.inaxes != self.plot_canvas.axes_main or event.xdata is None:
