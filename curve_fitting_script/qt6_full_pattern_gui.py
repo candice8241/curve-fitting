@@ -756,6 +756,8 @@ class FitPlotCanvas(FigureCanvas):
         self.phase_lines: List[Tuple[int, object]] = []
         self.calc_color = "#2563eb"
         self.last_phase_patterns: List[np.ndarray] = []
+        self.last_bkg: Optional[np.ndarray] = None
+        self.last_calc: Optional[np.ndarray] = None
         self.base_xlim = None
         self.base_ylim_main = None
         self.base_ylim_diff = None
@@ -857,6 +859,8 @@ class FitPlotCanvas(FigureCanvas):
         self.current_calc = y_calc
         self.current_obs = y_obs
         self.last_phase_patterns = phase_patterns
+        self.last_bkg = y_bkg
+        self.last_calc = y_calc
 
         if x is None or y_calc is None:
             self.draw()
@@ -1133,6 +1137,8 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.calc_color_button.setStyleSheet(
             f"background-color: {self.calc_color}; color: white;"
         )
+        self.fit_profile_button = QtWidgets.QPushButton("Fit Profile")
+        self.fit_profile_button.clicked.connect(self.fit_profile_parameters)
         self.method_status_label = QtWidgets.QLabel("Le Bail refine: pending")
 
         self.sigma_spin = QtWidgets.QDoubleSpinBox()
@@ -1203,6 +1209,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         fit_layout.addRow("Method", self.method_combo)
         fit_layout.addRow("Profile", self.profile_combo)
         fit_layout.addRow("Calc color", self.calc_color_button)
+        fit_layout.addRow("Fit profile", self.fit_profile_button)
         fit_layout.addRow("Status", self.method_status_label)
         fit_layout.addRow("Sigma", self.sigma_spin)
         fit_layout.addRow("Gamma", self.gamma_spin)
@@ -1227,13 +1234,18 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.plot_bg_button.toggled.connect(self.toggle_background_pick)
         self.plot_bg_clear_button = QtWidgets.QPushButton("Clear BG")
         self.plot_bg_clear_button.clicked.connect(self.clear_background_points)
+        self.plot_coord_label = QtWidgets.QLabel("x=--, y=--")
+        self.plot_coord_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         toolbar_row.addWidget(self.toolbar)
         toolbar_row.addWidget(self.plot_bg_button)
         toolbar_row.addWidget(self.plot_bg_clear_button)
         toolbar_row.addStretch(1)
+        toolbar_row.addWidget(self.plot_coord_label)
         plot_layout.addLayout(toolbar_row)
         plot_layout.addWidget(self.plot_canvas)
         self.plot_canvas.calc_color = self.calc_color
+        if hasattr(self.toolbar, "locLabel"):
+            self.toolbar.locLabel.setVisible(False)
         controls_scroll = QtWidgets.QScrollArea()
         controls_scroll.setWidgetResizable(True)
         controls_scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
@@ -1348,6 +1360,113 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.calc_color_button.setStyleSheet(
             f"background-color: {self.calc_color}; color: white;"
         )
+        self.schedule_update()
+
+    def fit_profile_parameters(self) -> None:
+        if self.data_x is None or self.data_y is None:
+            return
+        method = self.method_combo.currentText()
+        if method == "Le Bail":
+            self.mark_intensities_dirty()
+        if self.background_points:
+            fallback = compute_background(self.data_x, self.b0_spin.value(), self.b1_spin.value())
+        else:
+            y0 = float(self.data_y[0])
+            y1 = float(self.data_y[-1])
+            x0 = float(self.data_x[0])
+            x1 = float(self.data_x[-1])
+            slope = (y1 - y0) / (x1 - x0) if x1 != x0 else 0.0
+            fallback = y0 + slope * (self.data_x - x0)
+        background = interpolate_background(self.data_x, self.background_points, fallback)
+        compute_pattern(
+            self.data_x,
+            self.data_y,
+            self.phases,
+            method,
+            self.profile_params,
+            background,
+            self.zero_shift,
+            True,
+        )
+
+        if method == "Le Bail":
+            self._refresh_intensities = False
+            self._refine_pending = True
+
+        shape = self.profile_combo.currentText().lower()
+        params = []
+        bounds_low = []
+        bounds_high = []
+        if shape in ("voigt", "pseudo-voigt"):
+            params.extend([self.sigma_spin.value(), self.gamma_spin.value()])
+            bounds_low.extend([1e-4, 1e-4])
+            bounds_high.extend([5.0, 5.0])
+            if shape == "pseudo-voigt":
+                params.append(self.eta_spin.value())
+                bounds_low.append(0.0)
+                bounds_high.append(1.0)
+        elif shape == "gaussian":
+            params.append(self.sigma_spin.value())
+            bounds_low.append(1e-4)
+            bounds_high.append(5.0)
+        elif shape == "lorentzian":
+            params.append(self.gamma_spin.value())
+            bounds_low.append(1e-4)
+            bounds_high.append(5.0)
+
+        if not params:
+            return
+
+        def residuals(vector: np.ndarray) -> np.ndarray:
+            sigma = self.sigma_spin.value()
+            gamma = self.gamma_spin.value()
+            eta = self.eta_spin.value()
+            if shape == "gaussian":
+                sigma = float(vector[0])
+            elif shape == "lorentzian":
+                gamma = float(vector[0])
+            elif shape == "voigt":
+                sigma = float(vector[0])
+                gamma = float(vector[1])
+            elif shape == "pseudo-voigt":
+                sigma = float(vector[0])
+                gamma = float(vector[1])
+                eta = float(vector[2])
+            profile = ProfileParams(
+                shape=self.profile_combo.currentText(), sigma=sigma, gamma=gamma, eta=eta
+            )
+            calc, _, _ = compute_pattern(
+                self.data_x,
+                self.data_y,
+                self.phases,
+                method,
+                profile,
+                background,
+                self.zero_shift,
+                False,
+            )
+            return calc - self.data_y
+
+        result = least_squares(
+            residuals,
+            np.array(params, dtype=float),
+            bounds=(np.array(bounds_low, dtype=float), np.array(bounds_high, dtype=float)),
+            max_nfev=30,
+        )
+
+        if shape == "gaussian":
+            self.sigma_spin.setValue(float(result.x[0]))
+        elif shape == "lorentzian":
+            self.gamma_spin.setValue(float(result.x[0]))
+        elif shape == "voigt":
+            self.sigma_spin.setValue(float(result.x[0]))
+            self.gamma_spin.setValue(float(result.x[1]))
+        elif shape == "pseudo-voigt":
+            self.sigma_spin.setValue(float(result.x[0]))
+            self.gamma_spin.setValue(float(result.x[1]))
+            self.eta_spin.setValue(float(result.x[2]))
+
+        self.mark_intensities_dirty()
         self.schedule_update()
 
     def on_method_changed(self, _method: str) -> None:
@@ -1900,6 +2019,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
                 self.method_status_label.setText("Le Bail refine: paused (picking)")
             else:
                 self.method_status_label.setText("Le Bail refine: running")
+                QtWidgets.QApplication.processEvents()
             if self._refresh_intensities:
                 compute_pattern(
                     self.data_x,
@@ -1927,16 +2047,21 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
                 else:
                     self.method_status_label.setText(f"Le Bail refine: done (Δ={max_change:.4g})")
 
-            calc, bkg, phase_patterns = compute_pattern(
-                self.data_x,
-                self.data_y,
-                self.phases,
-                method,
-                self.profile_params,
-                background,
-                self.zero_shift,
-                False,
-            )
+            if self._background_preview and self.plot_canvas.last_calc is not None and self.plot_canvas.last_bkg is not None:
+                calc = self.plot_canvas.last_calc - self.plot_canvas.last_bkg + background
+                bkg = background
+                phase_patterns = self.plot_canvas.last_phase_patterns
+            else:
+                calc, bkg, phase_patterns = compute_pattern(
+                    self.data_x,
+                    self.data_y,
+                    self.phases,
+                    method,
+                    self.profile_params,
+                    background,
+                    self.zero_shift,
+                    False,
+                )
             if "done" not in self.method_status_label.text() and not self._background_preview:
                 self.method_status_label.setText("Le Bail refine: done")
         else:
@@ -2144,6 +2269,8 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             }
 
     def on_plot_motion(self, event) -> None:
+        if event.inaxes is not None and event.xdata is not None and event.ydata is not None:
+            self.plot_coord_label.setText(f"x={event.xdata:.4f}, y={event.ydata:.4f}")
         if self._dragging_phase is None or self._drag_anchor_x is None:
             return
         if event.inaxes != self.plot_canvas.axes_main or event.xdata is None:
