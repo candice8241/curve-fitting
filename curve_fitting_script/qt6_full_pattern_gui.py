@@ -374,6 +374,19 @@ def two_theta_from_d(d_spacing: float, wavelength: float) -> Optional[float]:
     return math.degrees(2.0 * theta)
 
 
+def compute_cell_volume(cell: CellParameters) -> float:
+    alpha = math.radians(cell.alpha)
+    beta = math.radians(cell.beta)
+    gamma = math.radians(cell.gamma)
+    cos_a = math.cos(alpha)
+    cos_b = math.cos(beta)
+    cos_g = math.cos(gamma)
+    volume = cell.a * cell.b * cell.c * math.sqrt(
+        max(0.0, 1.0 + 2.0 * cos_a * cos_b * cos_g - cos_a**2 - cos_b**2 - cos_g**2)
+    )
+    return volume
+
+
 def merge_peaks(peaks: List[Tuple[float, float]], tolerance: float = 0.02) -> List[Tuple[float, float]]:
     if not peaks:
         return []
@@ -742,6 +755,7 @@ class FitPlotCanvas(FigureCanvas):
         self.current_obs = None
         self.phase_lines: List[Tuple[int, object]] = []
         self.calc_color = "#2563eb"
+        self.last_phase_patterns: List[np.ndarray] = []
         self.base_xlim = None
         self.base_ylim_main = None
         self.base_ylim_diff = None
@@ -842,6 +856,7 @@ class FitPlotCanvas(FigureCanvas):
         self.current_x = x
         self.current_calc = y_calc
         self.current_obs = y_obs
+        self.last_phase_patterns = phase_patterns
 
         if x is None or y_calc is None:
             self.draw()
@@ -985,8 +1000,9 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self._dragging_phases: List[int] = []
         self._drag_start_cells: Dict[int, CellParameters] = {}
         self.calc_color = "#2563eb"
-        self.mark_intensities_dirty()
+        self._refresh_intensities = True
         self._refine_pending = True
+        self._panel_updating = False
 
         self._table_updating = False
         self._dragging_phase: Optional[int] = None
@@ -1066,6 +1082,39 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         phase_layout.addLayout(phase_buttons)
         phase_layout.addWidget(self.phase_table)
 
+        self.unit_cell_group = QtWidgets.QGroupBox("Unit Cell")
+        unit_layout = QtWidgets.QFormLayout(self.unit_cell_group)
+        unit_layout.setHorizontalSpacing(10)
+        unit_layout.setVerticalSpacing(8)
+        unit_layout.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
+        self.unit_cell_label = QtWidgets.QLabel("No phase selected")
+        unit_layout.addRow("Phase", self.unit_cell_label)
+
+        self.unit_param_widgets: Dict[str, Tuple[QtWidgets.QLabel, QtWidgets.QDoubleSpinBox]] = {}
+        def add_unit_spin(name: str, decimals: int, step: float, minimum: float, maximum: float) -> None:
+            label = QtWidgets.QLabel(name)
+            spin = QtWidgets.QDoubleSpinBox()
+            spin.setDecimals(decimals)
+            spin.setSingleStep(step)
+            spin.setRange(minimum, maximum)
+            spin.setKeyboardTracking(False)
+            spin.valueChanged.connect(
+                lambda val, n=name: self.on_unit_cell_changed(n, val)
+            )
+            self.unit_param_widgets[name] = (label, spin)
+            unit_layout.addRow(label, spin)
+
+        add_unit_spin("a", 4, 0.001, 0.1, 50.0)
+        add_unit_spin("b", 4, 0.001, 0.1, 50.0)
+        add_unit_spin("c", 4, 0.001, 0.1, 50.0)
+        add_unit_spin("alpha", 3, 0.05, 10.0, 170.0)
+        add_unit_spin("beta", 3, 0.05, 10.0, 170.0)
+        add_unit_spin("gamma", 3, 0.05, 10.0, 170.0)
+        add_unit_spin("scale", 4, 0.01, 0.0, 1e6)
+
+        self.unit_cell_volume = QtWidgets.QLabel("Volume: -")
+        unit_layout.addRow("Volume", self.unit_cell_volume)
+
         fit_group = QtWidgets.QGroupBox("Fit Settings")
         fit_layout = QtWidgets.QFormLayout(fit_group)
         fit_layout.setHorizontalSpacing(10)
@@ -1085,6 +1134,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.calc_color_button.setStyleSheet(
             f"background-color: {self.calc_color}; color: white;"
         )
+        self.method_status_label = QtWidgets.QLabel("Le Bail refine: pending")
 
         self.sigma_spin = QtWidgets.QDoubleSpinBox()
         self.sigma_spin.setRange(1e-4, 5.0)
@@ -1154,6 +1204,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         fit_layout.addRow("Method", self.method_combo)
         fit_layout.addRow("Profile", self.profile_combo)
         fit_layout.addRow("Calc color", self.calc_color_button)
+        fit_layout.addRow("Status", self.method_status_label)
         fit_layout.addRow("Sigma", self.sigma_spin)
         fit_layout.addRow("Gamma", self.gamma_spin)
         fit_layout.addRow("Eta", self.eta_spin)
@@ -1174,6 +1225,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
 
         control_layout.addWidget(data_group)
         control_layout.addWidget(phase_group)
+        control_layout.addWidget(self.unit_cell_group)
         control_layout.addWidget(fit_group)
         control_layout.addWidget(background_group)
         control_layout.addStretch(1)
@@ -1635,6 +1687,9 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             set_spin(8, phase.scale, 4, 0.01, 0.0, 1e6, True, "scale")
 
         self._table_updating = False
+        if self.selected_phase_index is not None:
+            self.phase_table.selectRow(self.selected_phase_index)
+        self.update_unit_cell_panel()
 
     def on_phase_selection_changed(self) -> None:
         selected = self.phase_table.selectedItems()
@@ -1643,6 +1698,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         else:
             self.selected_phase_index = selected[0].row()
         self.schedule_update()
+        self.update_unit_cell_panel()
 
     def on_phase_cell_changed(self, row: int, column: int) -> None:
         if self._table_updating:
@@ -1734,6 +1790,70 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.update_phase_table()
         self.schedule_update()
 
+    def update_unit_cell_panel(self) -> None:
+        if self._panel_updating:
+            return
+        self._panel_updating = True
+        try:
+            if self.selected_phase_index is None or self.selected_phase_index >= len(self.phases):
+                self.unit_cell_label.setText("No phase selected")
+                for label, spin in self.unit_param_widgets.values():
+                    label.setVisible(False)
+                    spin.setVisible(False)
+                self.unit_cell_volume.setText("Volume: -")
+                return
+            phase = self.phases[self.selected_phase_index]
+            self.unit_cell_label.setText(phase.name)
+            allowed = symmetry_allowed_params(phase.symmetry)
+            for name, (label, spin) in self.unit_param_widgets.items():
+                if name == "scale":
+                    spin.setValue(phase.scale)
+                    label.setVisible(True)
+                    spin.setVisible(True)
+                    spin.setEnabled(True)
+                    continue
+                if phase.cell is None:
+                    label.setVisible(False)
+                    spin.setVisible(False)
+                    continue
+                if name not in allowed:
+                    label.setVisible(False)
+                    spin.setVisible(False)
+                    continue
+                label.setVisible(True)
+                spin.setVisible(True)
+                spin.setEnabled(True)
+                spin.setValue(getattr(phase.cell, name))
+            if phase.cell is not None:
+                volume = compute_cell_volume(phase.cell)
+                self.unit_cell_volume.setText(f"Volume: {volume:.3f}")
+            else:
+                self.unit_cell_volume.setText("Volume: -")
+        finally:
+            self._panel_updating = False
+
+    def on_unit_cell_changed(self, name: str, value: float) -> None:
+        if self._panel_updating:
+            return
+        if self.selected_phase_index is None or self.selected_phase_index >= len(self.phases):
+            return
+        phase = self.phases[self.selected_phase_index]
+        if name == "scale":
+            phase.scale = max(0.0, float(value))
+            self.schedule_update()
+            return
+        if phase.cell is None:
+            return
+        allowed = symmetry_allowed_params(phase.symmetry)
+        if name not in allowed:
+            return
+        setattr(phase.cell, name, float(value))
+        enforce_symmetry(phase.cell, phase.symmetry)
+        self._peaks_dirty = True
+        self.refresh_phase_peaks()
+        self.update_phase_table()
+        self.schedule_update()
+
     def refresh_phase_peaks(self) -> None:
         if self.data_x is None or not self._peaks_dirty:
             return
@@ -1799,6 +1919,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             fallback = y0 + slope * (self.data_x - x0)
         background = interpolate_background(self.data_x, self.background_points, fallback)
         if method == "Le Bail" and self.data_y is not None:
+            self.method_status_label.setText("Le Bail refine: running")
             if self._refresh_intensities:
                 compute_pattern(
                     self.data_x,
@@ -1832,7 +1953,9 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
                 self.zero_shift,
                 False,
             )
+            self.method_status_label.setText("Le Bail refine: done")
         else:
+            self.method_status_label.setText(f"Method: {method}")
             calc, bkg, phase_patterns = compute_pattern(
                 self.data_x,
                 self.data_y,
