@@ -1248,15 +1248,14 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.plot_file_label = QtWidgets.QLabel("Data: (none)")
         self.plot_file_label.setStyleSheet("color: #1e3a8a; font-weight: 600;")
         toolbar_row.addWidget(self.toolbar)
+        toolbar_row.addWidget(self.plot_bg_button)
+        toolbar_row.addWidget(self.plot_bg_clear_button)
         toolbar_row.addStretch(1)
         toolbar_row.addWidget(self.plot_file_label)
         toolbar_row.addStretch(1)
         if hasattr(self.toolbar, "locLabel"):
             self.toolbar.locLabel.setVisible(True)
             toolbar_row.addWidget(self.toolbar.locLabel)
-        toolbar_row.addSpacing(12)
-        toolbar_row.addWidget(self.plot_bg_button)
-        toolbar_row.addWidget(self.plot_bg_clear_button)
         plot_layout.addLayout(toolbar_row)
         plot_layout.addWidget(self.plot_canvas)
         self.plot_canvas.calc_color = self.calc_color
