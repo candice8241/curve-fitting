@@ -556,6 +556,9 @@ class FitPlotCanvas(FigureCanvas):
         self.current_x = None
         self.current_calc = None
         self.current_obs = None
+        self.base_xlim = None
+        self.base_ylim_main = None
+        self.base_ylim_diff = None
         self.mpl_connect("scroll_event", self.on_scroll)
 
     def on_scroll(self, event) -> None:
@@ -571,6 +574,18 @@ class FitPlotCanvas(FigureCanvas):
         x_center = event.xdata if event.xdata is not None else 0.5 * (x_min + x_max)
         x_left = x_center - (x_center - x_min) * scale_factor
         x_right = x_center + (x_max - x_center) * scale_factor
+
+        if self.base_xlim is not None:
+            base_left, base_right = self.base_xlim
+            if (x_right - x_left) >= (base_right - base_left):
+                x_left, x_right = base_left, base_right
+            else:
+                if x_left < base_left:
+                    x_right += base_left - x_left
+                    x_left = base_left
+                if x_right > base_right:
+                    x_left -= x_right - base_right
+                    x_right = base_right
         self.axes_main.set_xlim(x_left, x_right)
         self.axes_diff.set_xlim(x_left, x_right)
 
@@ -579,6 +594,21 @@ class FitPlotCanvas(FigureCanvas):
         y_center = event.ydata if event.ydata is not None else 0.5 * (y_min + y_max)
         y_low = y_center - (y_center - y_min) * scale_factor
         y_high = y_center + (y_max - y_center) * scale_factor
+        if axis == self.axes_main and self.base_ylim_main is not None:
+            base_low, base_high = self.base_ylim_main
+            if (y_high - y_low) >= (base_high - base_low):
+                y_low, y_high = base_low, base_high
+            else:
+                if y_low < base_low:
+                    y_high += base_low - y_low
+                    y_low = base_low
+                if y_high > base_high:
+                    y_low -= y_high - base_high
+                    y_high = base_high
+        if axis == self.axes_diff and self.base_ylim_diff is not None:
+            base_low, base_high = self.base_ylim_diff
+            if (y_high - y_low) >= (base_high - base_low):
+                y_low, y_high = base_low, base_high
         axis.set_ylim(y_low, y_high)
         self.draw_idle()
 
@@ -623,17 +653,17 @@ class FitPlotCanvas(FigureCanvas):
                 linestyle="none",
                 marker="+",
                 markersize=3,
-                color="#2563eb",
+            color="#1d4ed8",
                 label="obs",
             )
 
         self.calc_line = self.axes_main.plot(
-            x, y_calc, color="#22c55e", linewidth=1.8, label="calc"
+            x, y_calc, color="#2563eb", linewidth=1.8, label="calc"
         )[0]
         self.calc_line.set_picker(5)
         self.calc_line.set_pickradius(8)
         if y_bkg is not None:
-            self.axes_main.plot(x, y_bkg, color="#ef4444", linewidth=1.2, label="bkg")
+            self.axes_main.plot(x, y_bkg, color="#94a3b8", linewidth=1.2, label="bkg")
 
         if background_points:
             points_x = [point[0] for point in background_points]
@@ -642,8 +672,8 @@ class FitPlotCanvas(FigureCanvas):
                 points_x,
                 points_y,
                 s=28,
-                color="#f59e0b",
-                edgecolors="#f8fafc",
+                color="#f97316",
+                edgecolors="#ffffff",
                 linewidths=0.5,
                 label="bkg pts",
                 zorder=4,
@@ -651,7 +681,7 @@ class FitPlotCanvas(FigureCanvas):
 
         if y_obs is not None:
             diff = y_obs - y_calc
-            self.axes_diff.plot(x, diff, color="#06b6d4", linewidth=1.0, label="diff")
+            self.axes_diff.plot(x, diff, color="#0ea5e9", linewidth=1.0, label="diff")
             self.axes_diff.axhline(0.0, color="black", linewidth=0.8)
             base_range = float(np.max(y_calc) - np.min(y_calc))
             diff_range = float(np.max(np.abs(diff)))
@@ -682,13 +712,13 @@ class FitPlotCanvas(FigureCanvas):
         for phase_index, phase in enumerate(phases):
             row = phase_index % 2
             label_rows[row].append(phase.name)
-            line_width = 1.6 if selected_index == phase_index else 1.0
+            line_width = 1.3 if selected_index == phase_index else 1.0
             row_base = tick_base - row * row_gap
             for center, _ in phase.peaks:
                 tick_axis.plot(
                     [center, center],
                     [row_base, row_base + tick_height],
-                    color=phase.color,
+                    color="#1d4ed8",
                     linewidth=line_width,
                 )
         for row_index, names in enumerate(label_rows):
@@ -699,7 +729,7 @@ class FitPlotCanvas(FigureCanvas):
                 x_min + 0.01 * (x_max - x_min),
                 row_base + tick_height * 0.6,
                 " | ".join(names),
-                color="#334155",
+                color="#1e3a8a",
                 fontsize=8,
                 va="center",
                 ha="left",
@@ -711,6 +741,9 @@ class FitPlotCanvas(FigureCanvas):
         self.axes_diff.set_ylabel("Diff")
         self.axes_main.grid(True, color="#e2e8f0", linewidth=0.7)
         self.axes_diff.grid(True, color="#e2e8f0", linewidth=0.7)
+        self.base_xlim = self.axes_main.get_xlim()
+        self.base_ylim_main = self.axes_main.get_ylim()
+        self.base_ylim_diff = self.axes_diff.get_ylim()
         self.draw()
 
 
@@ -731,6 +764,8 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self._peaks_dirty = True
         self._last_view = None
         self._last_data_range = None
+        self._dragging_phases: List[int] = []
+        self._drag_start_cells: Dict[int, CellParameters] = {}
 
         self._table_updating = False
         self._dragging_phase: Optional[int] = None
@@ -964,6 +999,14 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             """
         )
 
+    def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
+        if event.key() == Qt.Key.Key_Escape and self.background_pick_mode:
+            self.bg_pick_button.setChecked(False)
+            self.toggle_background_pick(False)
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
     def _connect_signals(self) -> None:
         self.load_data_button.clicked.connect(self.load_data)
         self.load_phase_button.clicked.connect(self.load_phase)
@@ -1010,8 +1053,10 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         if enabled:
             self.plot_canvas.setCursor(Qt.CursorShape.CrossCursor)
             self.set_status("Background pick: left-click add, right-click remove.")
+            self.bg_pick_button.setText("Picking Background")
         else:
             self.plot_canvas.setCursor(Qt.CursorShape.ArrowCursor)
+            self.bg_pick_button.setText("Pick Background")
 
     def clear_background_points(self) -> None:
         self.background_points.clear()
@@ -1029,7 +1074,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.background_points.sort(key=lambda item: item[0])
         self._update_background_controls()
         self.set_status(f"Background points: {len(self.background_points)}")
-        self.schedule_update()
+        self.update_pattern()
 
     def _remove_background_point(self, x_val: float, y_val: float) -> None:
         if not self.background_points or self.data_x is None or self.data_y is None:
@@ -1049,7 +1094,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             self.background_points.pop(best_index)
             self._update_background_controls()
             self.set_status(f"Background points: {len(self.background_points)}")
-            self.schedule_update()
+            self.update_pattern()
 
     def load_data(self) -> None:
         file_path, _ = QtWidgets.QFileDialog.getOpenFileName(
@@ -1516,23 +1561,36 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             self.phase_table.selectRow(0)
             self.selected_phase_index = 0
         if self.selected_phase_index is None:
-            self.set_status("Select a phase to drag its lattice parameters.")
-            return
-        if not (0 <= self.selected_phase_index < len(self.phases)):
-            return
-        phase = self.phases[self.selected_phase_index]
-        if phase.cell is None:
-            self.set_status("Selected phase has no lattice parameters to adjust.")
-            return
+            self._dragging_phases = [
+                idx for idx, phase in enumerate(self.phases) if phase.cell is not None
+            ]
+            if not self._dragging_phases:
+                self.set_status("No lattice parameters available for dragging.")
+                return
+        else:
+            if not (0 <= self.selected_phase_index < len(self.phases)):
+                return
+            phase = self.phases[self.selected_phase_index]
+            if phase.cell is None:
+                self.set_status("Selected phase has no lattice parameters to adjust.")
+                return
+            self._dragging_phases = [self.selected_phase_index]
         if event.xdata is None:
             return
         if event.button != 1:
             return
         if not self.plot_canvas.is_over_calc_line(event):
             return
-        self._dragging_phase = self.selected_phase_index
+        self._dragging_phase = self.selected_phase_index if self.selected_phase_index is not None else -1
         self._drag_anchor_x = float(event.xdata)
-        self._drag_start_cell = CellParameters(*phase.cell.as_tuple())
+        if self._dragging_phases:
+            first_phase = self.phases[self._dragging_phases[0]]
+            self._drag_start_cell = CellParameters(*first_phase.cell.as_tuple())
+            self._drag_start_cells = {
+                idx: CellParameters(*self.phases[idx].cell.as_tuple())
+                for idx in self._dragging_phases
+                if self.phases[idx].cell is not None
+            }
 
     def on_plot_motion(self, event) -> None:
         if self._dragging_phase is None or self._drag_anchor_x is None:
@@ -1546,17 +1604,23 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         delta = float(event.xdata) - self._drag_anchor_x
         if abs(delta) < 1e-6:
             return
-        phase = self.phases[self._dragging_phase]
-        if phase.cell is None or self._drag_start_cell is None:
+        if not self._dragging_phases or self._drag_start_cell is None:
             return
         anchor_theta = math.radians(self._drag_anchor_x / 2.0)
         shifted_theta = math.radians((self._drag_anchor_x + delta) / 2.0)
         if math.sin(shifted_theta) <= 0:
             return
         scale = math.sin(anchor_theta) / math.sin(shifted_theta)
-        phase.cell.a = self._drag_start_cell.a * scale
-        phase.cell.b = self._drag_start_cell.b * scale
-        phase.cell.c = self._drag_start_cell.c * scale
+        for idx in self._dragging_phases:
+            phase = self.phases[idx]
+            if phase.cell is None:
+                continue
+            start_cell = self._drag_start_cells.get(idx)
+            if start_cell is None:
+                continue
+            phase.cell.a = start_cell.a * scale
+            phase.cell.b = start_cell.b * scale
+            phase.cell.c = start_cell.c * scale
         self.update_phase_table()
         self.refresh_phase_peaks()
         self.schedule_update()
@@ -1565,6 +1629,8 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self._dragging_phase = None
         self._drag_anchor_x = None
         self._drag_start_cell = None
+        self._drag_start_cells = {}
+        self._dragging_phases = []
         self.schedule_update()
 
 
