@@ -1254,6 +1254,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         if hasattr(self.toolbar, "locLabel"):
             self.toolbar.locLabel.setVisible(True)
             toolbar_row.addWidget(self.toolbar.locLabel)
+        toolbar_row.addSpacing(12)
         toolbar_row.addWidget(self.plot_bg_button)
         toolbar_row.addWidget(self.plot_bg_clear_button)
         plot_layout.addLayout(toolbar_row)
