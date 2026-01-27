@@ -1052,10 +1052,8 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         phase_buttons.addWidget(self.remove_phase_button)
         phase_buttons.addWidget(self.clear_phases_button)
 
-        self.phase_table = QtWidgets.QTableWidget(0, 9)
-        self.phase_table.setHorizontalHeaderLabels(
-            ["Phase", "Color", "a", "b", "c", "alpha", "beta", "gamma", "Scale"]
-        )
+        self.phase_table = QtWidgets.QTableWidget(0, 1)
+        self.phase_table.setHorizontalHeaderLabels(["Phase"])
         self.phase_table.horizontalHeader().setSectionResizeMode(
             QtWidgets.QHeaderView.ResizeMode.Stretch
         )
@@ -1065,19 +1063,11 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.phase_table.setSelectionMode(
             QtWidgets.QAbstractItemView.SelectionMode.SingleSelection
         )
-        self.phase_table.setEditTriggers(
-            QtWidgets.QAbstractItemView.EditTrigger.DoubleClicked
-            | QtWidgets.QAbstractItemView.EditTrigger.SelectedClicked
-            | QtWidgets.QAbstractItemView.EditTrigger.EditKeyPressed
-        )
+        self.phase_table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
         self.phase_table.setAlternatingRowColors(True)
         self.phase_table.setMinimumHeight(140)
         self.phase_table.verticalHeader().setDefaultSectionSize(26)
-        self.phase_table.setColumnWidth(0, 140)
-        self.phase_table.setColumnWidth(1, 70)
-        for col in range(2, 8):
-            self.phase_table.setColumnWidth(col, 70)
-        self.phase_table.setColumnWidth(8, 70)
+        self.phase_table.setColumnWidth(0, 200)
 
         phase_layout.addLayout(phase_buttons)
         phase_layout.addWidget(self.phase_table)
@@ -1111,6 +1101,10 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         add_unit_spin("beta", 3, 0.05, 10.0, 170.0)
         add_unit_spin("gamma", 3, 0.05, 10.0, 170.0)
         add_unit_spin("scale", 4, 0.01, 0.0, 1e6)
+
+        self.unit_color_button = QtWidgets.QPushButton("Select")
+        self.unit_color_button.clicked.connect(self.on_unit_color_clicked)
+        unit_layout.addRow("Color", self.unit_color_button)
 
         self.unit_cell_volume = QtWidgets.QLabel("Volume: -")
         unit_layout.addRow("Volume", self.unit_cell_volume)
@@ -1361,7 +1355,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         background: np.ndarray,
         profile: ProfileParams,
         zero_shift: float,
-    ) -> None:
+    ) -> float:
         param_map: List[Tuple[int, str]] = []
         params: List[float] = []
         lower: List[float] = []
@@ -1383,7 +1377,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
                     lower.append(value - 2.0)
                     upper.append(value + 2.0)
         if not params:
-            return
+            return 0.0
 
         two_theta_min = float(np.min(x))
         two_theta_max = float(np.max(x))
@@ -1413,13 +1407,16 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             )
             return calc - y
 
+        start_params = np.array(params, dtype=float)
         result = least_squares(
             residuals,
-            np.array(params, dtype=float),
+            start_params,
             bounds=(np.array(lower, dtype=float), np.array(upper, dtype=float)),
             max_nfev=15,
         )
         apply_params(result.x)
+        max_change = float(np.max(np.abs(result.x - start_params))) if result.x.size else 0.0
+        return max_change
 
     def _apply_scheduled_update(self) -> None:
         if not self._pending_update:
@@ -1618,74 +1615,6 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             name_item.setForeground(QtGui.QBrush(QtGui.QColor(phase.color)))
             self.phase_table.setItem(row, 0, name_item)
 
-            def set_cell(column: int, value: Optional[float], editable: bool = True, display: Optional[str] = None) -> None:
-                self.phase_table.setCellWidget(row, column, None)
-                if display is not None:
-                    text = display
-                elif value is None:
-                    text = "N/A"
-                else:
-                    text = f"{value:.4f}"
-                item = QtWidgets.QTableWidgetItem(text)
-                if value is None or not editable:
-                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                self.phase_table.setItem(row, column, item)
-
-            def set_spin(column: int, value: float, decimals: int, step: float, minimum: float, maximum: float, enabled: bool, param_name: str) -> None:
-                spin = QtWidgets.QDoubleSpinBox()
-                spin.setDecimals(decimals)
-                spin.setSingleStep(step)
-                spin.setRange(minimum, maximum)
-                spin.setValue(value)
-                spin.setEnabled(enabled)
-                spin.setKeyboardTracking(False)
-                spin.valueChanged.connect(
-                    lambda val, r=row, p=param_name: self.on_phase_spin_changed(r, p, val)
-                )
-                self.phase_table.setCellWidget(row, column, spin)
-                if self.phase_table.item(row, column) is None:
-                    self.phase_table.setItem(row, column, QtWidgets.QTableWidgetItem(""))
-
-            if phase.cell:
-                allowed = symmetry_allowed_params(phase.symmetry)
-                color_button = QtWidgets.QPushButton("")
-                color_button.setStyleSheet(
-                    f"background-color: {phase.color}; border: 1px solid #c9dbf8;"
-                )
-                color_button.clicked.connect(
-                    lambda _checked=False, r=row: self.on_phase_color_clicked(r)
-                )
-                self.phase_table.setCellWidget(row, 1, color_button)
-                if self.phase_table.item(row, 1) is None:
-                    self.phase_table.setItem(row, 1, QtWidgets.QTableWidgetItem(""))
-
-                set_spin(2, phase.cell.a, 4, 0.001, 0.1, 50.0, "a" in allowed, "a")
-                if "b" in allowed:
-                    set_spin(3, phase.cell.b, 4, 0.001, 0.1, 50.0, True, "b")
-                else:
-                    set_cell(3, None, editable=False, display="-")
-                if "c" in allowed:
-                    set_spin(4, phase.cell.c, 4, 0.001, 0.1, 50.0, True, "c")
-                else:
-                    set_cell(4, None, editable=False, display="-")
-                if "alpha" in allowed:
-                    set_spin(5, phase.cell.alpha, 3, 0.05, 10.0, 170.0, True, "alpha")
-                else:
-                    set_cell(5, None, editable=False, display="-")
-                if "beta" in allowed:
-                    set_spin(6, phase.cell.beta, 3, 0.05, 10.0, 170.0, True, "beta")
-                else:
-                    set_cell(6, None, editable=False, display="-")
-                if "gamma" in allowed:
-                    set_spin(7, phase.cell.gamma, 3, 0.05, 10.0, 170.0, True, "gamma")
-                else:
-                    set_cell(7, None, editable=False, display="-")
-            else:
-                for col in range(1, 8):
-                    set_cell(col, None)
-
-            set_spin(8, phase.scale, 4, 0.01, 0.0, 1e6, True, "scale")
-
         self._table_updating = False
         if self.selected_phase_index is not None:
             self.phase_table.selectRow(self.selected_phase_index)
@@ -1705,8 +1634,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             return
         if row >= len(self.phases):
             return
-        if self.phase_table.cellWidget(row, column) is not None:
-            return
+        return
         phase = self.phases[row]
         item = self.phase_table.item(row, column)
         if item is None:
@@ -1790,6 +1718,19 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.update_phase_table()
         self.schedule_update()
 
+    def on_unit_color_clicked(self) -> None:
+        if self.selected_phase_index is None or self.selected_phase_index >= len(self.phases):
+            return
+        phase = self.phases[self.selected_phase_index]
+        color = QtWidgets.QColorDialog.getColor(
+            QtGui.QColor(phase.color), self, f"Choose color for {phase.name}"
+        )
+        if not color.isValid():
+            return
+        phase.color = color.name()
+        self.update_phase_table()
+        self.schedule_update()
+
     def update_unit_cell_panel(self) -> None:
         if self._panel_updating:
             return
@@ -1850,6 +1791,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         setattr(phase.cell, name, float(value))
         enforce_symmetry(phase.cell, phase.symmetry)
         self._peaks_dirty = True
+        self._refine_pending = True
         self.refresh_phase_peaks()
         self.update_phase_table()
         self.schedule_update()
@@ -1934,7 +1876,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
                 self._refresh_intensities = False
                 self._refine_pending = True
             if self._refine_pending:
-                self.refine_le_bail_cells(
+                max_change = self.refine_le_bail_cells(
                     self.data_x,
                     self.data_y,
                     background,
@@ -1942,6 +1884,10 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
                     self.zero_shift,
                 )
                 self._refine_pending = False
+                if max_change < 1e-5:
+                    self.method_status_label.setText("Le Bail refine: done (no change)")
+                else:
+                    self.method_status_label.setText(f"Le Bail refine: done (Δ={max_change:.4g})")
 
             calc, bkg, phase_patterns = compute_pattern(
                 self.data_x,
@@ -1953,7 +1899,8 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
                 self.zero_shift,
                 False,
             )
-            self.method_status_label.setText("Le Bail refine: done")
+            if "done" not in self.method_status_label.text():
+                self.method_status_label.setText("Le Bail refine: done")
         else:
             self.method_status_label.setText(f"Method: {method}")
             calc, bkg, phase_patterns = compute_pattern(
@@ -2189,6 +2136,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             phase.cell.c = start_cell.c * scale
             enforce_symmetry(phase.cell, phase.symmetry)
         self._peaks_dirty = True
+        self._refine_pending = True
         self.update_phase_table()
         self.refresh_phase_peaks()
         self.schedule_update()
