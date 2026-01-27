@@ -1046,8 +1046,8 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         phase_layout.setSpacing(6)
         phase_buttons = QtWidgets.QHBoxLayout()
         phase_buttons.setSpacing(6)
-        self.load_phase_button = QtWidgets.QPushButton("Load CIF/JCPDS")
-        self.clear_phases_button = QtWidgets.QPushButton("Clear Phases")
+        self.load_phase_button = QtWidgets.QPushButton("Load")
+        self.clear_phases_button = QtWidgets.QPushButton("Clear")
         phase_buttons.addWidget(self.load_phase_button)
         phase_buttons.addWidget(self.clear_phases_button)
 
@@ -1077,7 +1077,11 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         unit_layout.setHorizontalSpacing(10)
         unit_layout.setVerticalSpacing(8)
         unit_layout.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
+        unit_layout.setFieldGrowthPolicy(
+            QtWidgets.QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint
+        )
         self.unit_cell_label = QtWidgets.QLabel("No phase selected")
+        self.unit_cell_label.setWordWrap(True)
         unit_layout.addRow("Phase", self.unit_cell_label)
 
         self.unit_param_widgets: Dict[str, Tuple[QtWidgets.QLabel, QtWidgets.QDoubleSpinBox]] = {}
@@ -1107,6 +1111,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         unit_layout.addRow("Color", self.unit_color_button)
 
         self.unit_cell_volume = QtWidgets.QLabel("Volume: -")
+        self.unit_cell_volume.setWordWrap(True)
         unit_layout.addRow("Volume", self.unit_cell_volume)
 
         fit_group = QtWidgets.QGroupBox("Fit Settings")
@@ -1242,7 +1247,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
 
         self.setStyleSheet(
             """
-            QWidget { background: #eef5ff; }
+            QWidget { background: #ffffff; }
             QGroupBox {
                 border: 1px solid #c9dbf8;
                 border-radius: 6px;
@@ -1272,8 +1277,11 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
                 border: 1px solid #dbeafe;
                 alternate-background-color: #eff6ff;
             }
+            QTableWidget::item {
+                background-color: #ffffff;
+            }
             QTableWidget::item:selected {
-                background-color: rgba(59, 130, 246, 80);
+                background-color: rgba(59, 130, 246, 35);
                 color: #0f172a;
             }
             QHeaderView::section {
