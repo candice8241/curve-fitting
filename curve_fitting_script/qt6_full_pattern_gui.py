@@ -1205,23 +1205,10 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         fit_layout.addRow("Wavelength (A)", self.wavelength_spin)
         fit_layout.addRow("Zero shift (deg)", self.zero_shift_spin)
 
-        background_group = QtWidgets.QGroupBox("Background")
-        background_layout = QtWidgets.QVBoxLayout(background_group)
-        background_layout.setSpacing(6)
-        bg_buttons = QtWidgets.QHBoxLayout()
-        bg_buttons.setSpacing(6)
-        self.bg_pick_button = QtWidgets.QPushButton("Pick Background")
-        self.bg_pick_button.setCheckable(True)
-        self.bg_clear_button = QtWidgets.QPushButton("Clear Background")
-        bg_buttons.addWidget(self.bg_pick_button)
-        bg_buttons.addWidget(self.bg_clear_button)
-        background_layout.addLayout(bg_buttons)
-
         control_layout.addWidget(data_group)
         control_layout.addWidget(phase_group)
         control_layout.addWidget(self.unit_cell_group)
         control_layout.addWidget(fit_group)
-        control_layout.addWidget(background_group)
         control_layout.addStretch(1)
 
         plot_container = QtWidgets.QWidget()
@@ -1230,12 +1217,15 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.plot_canvas = FitPlotCanvas(plot_container)
         self.toolbar = NavigationToolbar(self.plot_canvas, self)
         toolbar_row = QtWidgets.QHBoxLayout()
-        self.plot_bg_button = QtWidgets.QPushButton("Add Background Point")
+        self.plot_bg_button = QtWidgets.QPushButton("Add BG Point")
         self.plot_bg_button.setCheckable(True)
         self.plot_bg_button.toggled.connect(self.toggle_background_pick)
-        toolbar_row.addWidget(self.plot_bg_button)
-        toolbar_row.addStretch(1)
+        self.plot_bg_clear_button = QtWidgets.QPushButton("Clear BG")
+        self.plot_bg_clear_button.clicked.connect(self.clear_background_points)
         toolbar_row.addWidget(self.toolbar)
+        toolbar_row.addWidget(self.plot_bg_button)
+        toolbar_row.addWidget(self.plot_bg_clear_button)
+        toolbar_row.addStretch(1)
         plot_layout.addLayout(toolbar_row)
         plot_layout.addWidget(self.plot_canvas)
         self.plot_canvas.calc_color = self.calc_color
@@ -1297,7 +1287,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
         if event.key() == Qt.Key.Key_Escape and self.background_pick_mode:
-            self.bg_pick_button.setChecked(False)
+            self.plot_bg_button.setChecked(False)
             self.toggle_background_pick(False)
             event.accept()
             return
@@ -1319,8 +1309,6 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.zero_shift_spin.valueChanged.connect(self.schedule_update)
         self.b0_spin.valueChanged.connect(self.schedule_update)
         self.b1_spin.valueChanged.connect(self.schedule_update)
-        self.bg_pick_button.toggled.connect(self.toggle_background_pick)
-        self.bg_clear_button.clicked.connect(self.clear_background_points)
 
         self.plot_canvas.mpl_connect("button_press_event", self.on_plot_press)
         self.plot_canvas.mpl_connect("motion_notify_event", self.on_plot_motion)
@@ -1439,19 +1427,15 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         if enabled:
             self.plot_canvas.setCursor(Qt.CursorShape.CrossCursor)
             self.set_status("Background pick: left-click add, right-click remove.")
-            self.bg_pick_button.setText("Picking Background")
             self.plot_bg_button.setText("Picking Background")
             self._background_preview = True
         else:
             self.plot_canvas.setCursor(Qt.CursorShape.ArrowCursor)
-            self.bg_pick_button.setText("Pick Background")
             self.plot_bg_button.setText("Add Background Point")
             if self._background_preview:
                 self._background_preview = False
                 self.mark_intensities_dirty()
                 self.schedule_update()
-        if self.bg_pick_button.isChecked() != enabled:
-            self.bg_pick_button.setChecked(enabled)
         if self.plot_bg_button.isChecked() != enabled:
             self.plot_bg_button.setChecked(enabled)
 
