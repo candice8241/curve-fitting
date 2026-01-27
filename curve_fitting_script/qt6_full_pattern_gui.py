@@ -1707,7 +1707,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             return
         if event.button != 1:
             return
-        if not self.plot_canvas.is_over_calc_line(event):
+        if self.plot_canvas.calc_line is None:
             return
         self._dragging_phase = self.selected_phase_index if self.selected_phase_index is not None else -1
         self._drag_anchor_x = float(event.xdata)
@@ -1750,6 +1750,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             phase.cell.b = start_cell.b * scale
             phase.cell.c = start_cell.c * scale
             enforce_symmetry(phase.cell, phase.symmetry)
+        self._peaks_dirty = True
         self.update_phase_table()
         self.refresh_phase_peaks()
         self.schedule_update()
