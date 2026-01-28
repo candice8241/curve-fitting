@@ -586,15 +586,9 @@ def build_profile_matrix(
     zero_shift: float,
 ) -> np.ndarray:
     matrix = np.zeros((len(x), len(centers)), dtype=float)
-    window = profile_window(params)
     for col_idx, center in enumerate(centers):
         shifted = center + zero_shift
-        if window > 0:
-            mask = np.abs(x - shifted) <= window
-            if np.any(mask):
-                matrix[mask, col_idx] = profile_function(x[mask], shifted, params)
-        else:
-            matrix[:, col_idx] = profile_function(x, shifted, params)
+        matrix[:, col_idx] = profile_function(x, shifted, params)
     return matrix
 
 
@@ -737,21 +731,13 @@ def compute_pattern(
         return calc, background, phase_patterns
 
     calc = background.copy()
-    window = profile_window(profile)
     for phase_index, phase in enumerate(phases):
         if not phase.peaks:
             continue
         phase_calc = np.zeros_like(x)
         for center, intensity in phase.peaks:
             shifted = center + zero_shift
-            if window > 0:
-                mask = np.abs(x - shifted) <= window
-                if np.any(mask):
-                    phase_calc[mask] += intensity * profile_function(
-                        x[mask], shifted, profile
-                    )
-            else:
-                phase_calc += intensity * profile_function(x, shifted, profile)
+            phase_calc += intensity * profile_function(x, shifted, profile)
         phase_calc *= phase.scale
         phase_patterns[phase_index] = phase_calc
         calc += phase_calc
@@ -1002,12 +988,12 @@ class FitPlotCanvas(FigureCanvas):
                 ha="left",
             )
 
-        self.axes_main.legend(loc="upper right", fontsize=8, frameon=True)
-        self.axes_main.set_ylabel("Intensity", fontsize=9)
-        self.axes_diff.set_xlabel("2theta", fontsize=9)
-        self.axes_diff.set_ylabel("Diff", fontsize=9)
-        self.axes_main.tick_params(axis="both", labelsize=8)
-        self.axes_diff.tick_params(axis="both", labelsize=8)
+        self.axes_main.legend(loc="upper right", fontsize=7, frameon=True)
+        self.axes_main.set_ylabel("Intensity", fontsize=8)
+        self.axes_diff.set_xlabel("2theta", fontsize=8)
+        self.axes_diff.set_ylabel("Diff", fontsize=8)
+        self.axes_main.tick_params(axis="both", labelsize=7)
+        self.axes_diff.tick_params(axis="both", labelsize=7)
         self.axes_main.grid(True, color="#e2e8f0", linewidth=0.7)
         self.axes_diff.grid(True, color="#e2e8f0", linewidth=0.7)
         self.base_xlim = self.axes_main.get_xlim()
