@@ -984,6 +984,18 @@ class FitPlotCanvas(FigureCanvas):
         self.draw()
 
 
+class NoCoordToolbar(NavigationToolbar):
+    def __init__(self, canvas: FigureCanvas, parent: QtWidgets.QWidget):
+        super().__init__(canvas, parent)
+        if hasattr(self, "locLabel"):
+            self.locLabel.hide()
+            self.locLabel.setFixedWidth(0)
+            self.locLabel.setText("")
+
+    def set_message(self, _s: str) -> None:
+        return
+
+
 class FullPatternFittingWindow(QtWidgets.QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -1041,27 +1053,25 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         data_layout.setSpacing(6)
         self.data_label = QtWidgets.QLabel("No data loaded.")
         self.data_label.setWordWrap(True)
-        self.load_data_button = QtWidgets.QPushButton("Load Data (.dat/.txt/.chi/.xy/.fxye)")
-        data_layout.addWidget(self.load_data_button)
+        self.load_data_button = QtWidgets.QPushButton("Load Data")
+        self.load_phase_button = QtWidgets.QPushButton("Load CIF")
+        data_buttons = QtWidgets.QHBoxLayout()
+        data_buttons.addWidget(self.load_data_button)
+        data_buttons.addWidget(self.load_phase_button)
+        data_layout.addLayout(data_buttons)
         data_layout.addWidget(self.data_label)
 
         phase_group = QtWidgets.QGroupBox("Phases (CIF / JCPDS)")
         phase_layout = QtWidgets.QVBoxLayout(phase_group)
         phase_layout.setSpacing(6)
-        phase_buttons = QtWidgets.QHBoxLayout()
-        phase_buttons.setSpacing(6)
-        self.load_phase_button = QtWidgets.QPushButton("Load")
         self.clear_phases_button = QtWidgets.QPushButton("Clear")
-        self.load_phase_button.setFixedWidth(90)
-        self.clear_phases_button.setFixedWidth(90)
-        phase_buttons.addWidget(self.load_phase_button)
-        phase_buttons.addWidget(self.clear_phases_button)
 
         self.phase_table = QtWidgets.QTableWidget(0, 2)
         self.phase_table.setHorizontalHeaderLabels(["Phase", ""])
         self.phase_table.horizontalHeader().setSectionResizeMode(
             QtWidgets.QHeaderView.ResizeMode.Stretch
         )
+        self.phase_table.horizontalHeader().setVisible(False)
         self.phase_table.setSelectionBehavior(
             QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows
         )
@@ -1081,7 +1091,6 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         header_font.setPointSize(max(7, header_font.pointSize() - 2))
         self.phase_table.horizontalHeader().setFont(header_font)
 
-        phase_layout.addLayout(phase_buttons)
         phase_layout.addWidget(self.phase_table)
 
         self.unit_cell_group = QtWidgets.QGroupBox("Unit Cell")
@@ -1238,7 +1247,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         plot_layout = QtWidgets.QVBoxLayout(plot_container)
         plot_layout.setContentsMargins(4, 4, 4, 4)
         self.plot_canvas = FitPlotCanvas(plot_container)
-        self.toolbar = NavigationToolbar(self.plot_canvas, self)
+        self.toolbar = NoCoordToolbar(self.plot_canvas, self)
         if hasattr(self.toolbar, "locLabel"):
             self.toolbar.locLabel.setVisible(False)
             self.toolbar.locLabel.setText("")
@@ -1256,8 +1265,6 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         toolbar_row.addStretch(1)
         toolbar_row.addWidget(self.plot_coord_label)
         plot_layout.addLayout(toolbar_row)
-        if hasattr(self.toolbar, "locLabel"):
-            self.toolbar.locLabel.setVisible(False)
         self.plot_file_label = QtWidgets.QLabel("Data: (none)")
         self.plot_file_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.plot_file_label.setStyleSheet("color: #1e3a8a; font-weight: 600;")
