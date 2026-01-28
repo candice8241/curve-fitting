@@ -16,6 +16,33 @@ It supports both **Voigt** and **Pseudo-Voigt** profiles for flexible fitting, a
 - ✅ Save high-quality plots + `.csv` per file  
 - ✅ Final `all_results.csv` summarizes everything for you
 
+## Qt6 Full-Pattern Fitting GUI (Rietveld / Pawley / Le Bail)
+
+A Qt6 GUI is provided for full-pattern fitting and lattice-parameter refinement:
+
+**Features**
+- Load data: `.dat`, `.txt`, `.chi`, `.xy`, `.fxye`
+- Load phases: `.cif` or `.jcpds` for peak positions
+- Methods: **Rietveld**, **Pawley**, **Le Bail**
+- Peak profiles: **Voigt**, **Gaussian**, **Lorentzian**, **Pseudo-Voigt**
+- Adjustable profile parameters and background
+- Update lattice parameters from the table or by dragging the calculated curve
+
+**Run**
+
+```bash
+pip install -r curve_fitting_script/requirements.txt
+python curve_fitting_script/qt6_full_pattern_gui.py
+```
+
+**Workflow**
+
+1. Load data (`Load Data`)
+2. Load CIF/JCPDS phases (`Load CIF/JCPDS`)
+3. Choose method/profile and adjust parameters
+4. Click `Update Pattern` or `Fit`
+5. Drag the calculated phase line to scale lattice parameters
+
 ---
 
 > **Author:** [candicewang928@gmail.com](mailto:candicewang928@gmail.com)  
