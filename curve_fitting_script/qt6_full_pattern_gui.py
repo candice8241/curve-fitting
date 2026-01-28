@@ -758,6 +758,7 @@ class FitPlotCanvas(FigureCanvas):
         self.last_phase_patterns: List[np.ndarray] = []
         self.last_bkg: Optional[np.ndarray] = None
         self.last_calc: Optional[np.ndarray] = None
+        self.show_phase_curves = False
         self.base_xlim = None
         self.base_ylim_main = None
         self.base_ylim_diff = None
@@ -873,7 +874,7 @@ class FitPlotCanvas(FigureCanvas):
                 linestyle="none",
                 marker="+",
                 markersize=3,
-            color="#1d4ed8",
+                color="#1d4ed8",
                 label="obs",
             )
 
@@ -883,22 +884,23 @@ class FitPlotCanvas(FigureCanvas):
         self.calc_line.set_picker(5)
         self.calc_line.set_pickradius(8)
 
-        for phase_index, phase in enumerate(phases):
-            if phase_index >= len(phase_patterns):
-                continue
-            pattern = phase_patterns[phase_index]
-            if pattern is None or not np.any(pattern):
-                continue
-            phase_line = self.axes_main.plot(
-                x,
-                pattern,
-                color=phase.color,
-                linewidth=1.1,
-                alpha=0.7,
-                label="_nolegend_",
-            )[0]
-            phase_line.set_picker(6)
-            self.phase_lines.append((phase_index, phase_line))
+        if self.show_phase_curves:
+            for phase_index, phase in enumerate(phases):
+                if phase_index >= len(phase_patterns):
+                    continue
+                pattern = phase_patterns[phase_index]
+                if pattern is None or not np.any(pattern):
+                    continue
+                phase_line = self.axes_main.plot(
+                    x,
+                    pattern,
+                    color=phase.color,
+                    linewidth=1.1,
+                    alpha=0.7,
+                    label="_nolegend_",
+                )[0]
+                phase_line.set_picker(6)
+                self.phase_lines.append((phase_index, phase_line))
         if y_bkg is not None:
             self.axes_main.plot(x, y_bkg, color="#94a3b8", linewidth=1.2, label="bkg")
 
@@ -973,9 +975,11 @@ class FitPlotCanvas(FigureCanvas):
             )
 
         self.axes_main.legend(loc="upper right", fontsize=9, frameon=True)
-        self.axes_main.set_ylabel("Intensity")
-        self.axes_diff.set_xlabel("2theta")
-        self.axes_diff.set_ylabel("Diff")
+        self.axes_main.set_ylabel("Intensity", fontsize=10)
+        self.axes_diff.set_xlabel("2theta", fontsize=10)
+        self.axes_diff.set_ylabel("Diff", fontsize=10)
+        self.axes_main.tick_params(axis="both", labelsize=9)
+        self.axes_diff.tick_params(axis="both", labelsize=9)
         self.axes_main.grid(True, color="#e2e8f0", linewidth=0.7)
         self.axes_diff.grid(True, color="#e2e8f0", linewidth=0.7)
         self.base_xlim = self.axes_main.get_xlim()
@@ -1000,7 +1004,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Qt6 Full-Pattern Fitting (Rietveld / Pawley / Le Bail)")
-        self.resize(1200, 800)
+        self.resize(1400, 900)
 
         self.data_x: Optional[np.ndarray] = None
         self.data_y: Optional[np.ndarray] = None
@@ -1044,6 +1048,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         layout.addWidget(splitter)
 
         controls = QtWidgets.QWidget()
+        controls.setMinimumWidth(380)
         control_layout = QtWidgets.QVBoxLayout(controls)
         control_layout.setContentsMargins(10, 10, 10, 10)
         control_layout.setSpacing(12)
@@ -1154,6 +1159,8 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.calc_color_button.setStyleSheet(
             f"background-color: {self.calc_color}; color: white;"
         )
+        self.show_phase_curves_checkbox = QtWidgets.QCheckBox("Show phase curves")
+        self.show_phase_curves_checkbox.setChecked(False)
         self.fit_profile_button = QtWidgets.QPushButton("Fit Profile")
         self.fit_profile_button.clicked.connect(self.fit_profile_parameters)
         self.refine_cells_button = QtWidgets.QPushButton("Refine Cells")
@@ -1228,6 +1235,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         fit_layout.addRow("Method", self.method_combo)
         fit_layout.addRow("Profile", self.profile_combo)
         fit_layout.addRow("Calc color", self.calc_color_button)
+        fit_layout.addRow("", self.show_phase_curves_checkbox)
         fit_layout.addRow("Fit profile", self.fit_profile_button)
         fit_layout.addRow("Refine cells", self.refine_cells_button)
         fit_layout.addRow("Status", self.method_status_label)
@@ -1280,6 +1288,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         splitter.addWidget(controls_scroll)
         splitter.addWidget(plot_container)
         splitter.setStretchFactor(1, 1)
+        splitter.setSizes([420, 980])
 
         self.status_bar = QtWidgets.QStatusBar()
         self.setStatusBar(self.status_bar)
@@ -1351,6 +1360,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
         self.sigma_spin.valueChanged.connect(self.update_profile)
         self.gamma_spin.valueChanged.connect(self.update_profile)
         self.eta_spin.valueChanged.connect(self.update_profile)
+        self.show_phase_curves_checkbox.stateChanged.connect(self.schedule_update)
         self.wavelength_spin.valueChanged.connect(self.mark_peaks_dirty)
         self.wavelength_spin.valueChanged.connect(self.schedule_update)
         self.zero_shift_spin.valueChanged.connect(self.schedule_update)
@@ -1800,10 +1810,10 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
             name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             name_item.setForeground(QtGui.QBrush(QtGui.QColor(phase.color)))
             self.phase_table.setItem(row, 0, name_item)
-            delete_button = QtWidgets.QPushButton("x")
-            delete_button.setFixedWidth(20)
+            delete_button = QtWidgets.QPushButton("×")
+            delete_button.setFixedSize(20, 20)
             delete_button.setStyleSheet(
-                "background-color: #e2e8f0; color: #475569; border-radius: 4px;"
+                "background-color: #ef4444; color: white; border-radius: 10px; font-weight: bold;"
             )
             delete_button.clicked.connect(
                 lambda _checked=False, r=row: self.remove_phase_at(r)
@@ -2118,6 +2128,7 @@ class FullPatternFittingWindow(QtWidgets.QMainWindow):
                 self._refresh_intensities,
             )
             self._refresh_intensities = False
+        self.plot_canvas.show_phase_curves = self.show_phase_curves_checkbox.isChecked()
         self.plot_canvas.render(
             self.data_x,
             self.data_y,
