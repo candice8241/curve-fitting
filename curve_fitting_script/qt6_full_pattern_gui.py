@@ -568,6 +568,17 @@ def profile_function(x: np.ndarray, center: float, params: ProfileParams) -> np.
     return voigt_profile(x, center, params.sigma, params.gamma)
 
 
+def profile_window(params: ProfileParams) -> float:
+    shape = params.shape.lower()
+    if shape == "gaussian":
+        return 6.0 * max(params.sigma, 1e-6)
+    if shape == "lorentzian":
+        return 8.0 * max(params.gamma, 1e-6)
+    if shape == "pseudo-voigt":
+        return 6.0 * max(params.sigma, params.gamma, 1e-6)
+    return 6.0 * max(params.sigma, params.gamma, 1e-6)
+
+
 def build_profile_matrix(
     x: np.ndarray,
     centers: List[float],
@@ -575,8 +586,15 @@ def build_profile_matrix(
     zero_shift: float,
 ) -> np.ndarray:
     matrix = np.zeros((len(x), len(centers)), dtype=float)
+    window = profile_window(params)
     for col_idx, center in enumerate(centers):
-        matrix[:, col_idx] = profile_function(x, center + zero_shift, params)
+        shifted = center + zero_shift
+        if window > 0:
+            mask = np.abs(x - shifted) <= window
+            if np.any(mask):
+                matrix[mask, col_idx] = profile_function(x[mask], shifted, params)
+        else:
+            matrix[:, col_idx] = profile_function(x, shifted, params)
     return matrix
 
 
@@ -719,12 +737,21 @@ def compute_pattern(
         return calc, background, phase_patterns
 
     calc = background.copy()
+    window = profile_window(profile)
     for phase_index, phase in enumerate(phases):
         if not phase.peaks:
             continue
         phase_calc = np.zeros_like(x)
         for center, intensity in phase.peaks:
-            phase_calc += intensity * profile_function(x, center + zero_shift, profile)
+            shifted = center + zero_shift
+            if window > 0:
+                mask = np.abs(x - shifted) <= window
+                if np.any(mask):
+                    phase_calc[mask] += intensity * profile_function(
+                        x[mask], shifted, profile
+                    )
+            else:
+                phase_calc += intensity * profile_function(x, shifted, profile)
         phase_calc *= phase.scale
         phase_patterns[phase_index] = phase_calc
         calc += phase_calc
@@ -738,6 +765,7 @@ class FitPlotCanvas(FigureCanvas):
         self.setParent(parent)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setFocus()
+        fig.subplots_adjust(left=0.07, right=0.985, top=0.96, bottom=0.08)
         grid = fig.add_gridspec(2, 1, height_ratios=[3.5, 1.0], hspace=0.05)
         self.axes_main = fig.add_subplot(grid[0])
         self.axes_diff = fig.add_subplot(grid[1], sharex=self.axes_main)
@@ -974,12 +1002,12 @@ class FitPlotCanvas(FigureCanvas):
                 ha="left",
             )
 
-        self.axes_main.legend(loc="upper right", fontsize=9, frameon=True)
-        self.axes_main.set_ylabel("Intensity", fontsize=10)
-        self.axes_diff.set_xlabel("2theta", fontsize=10)
-        self.axes_diff.set_ylabel("Diff", fontsize=10)
-        self.axes_main.tick_params(axis="both", labelsize=9)
-        self.axes_diff.tick_params(axis="both", labelsize=9)
+        self.axes_main.legend(loc="upper right", fontsize=8, frameon=True)
+        self.axes_main.set_ylabel("Intensity", fontsize=9)
+        self.axes_diff.set_xlabel("2theta", fontsize=9)
+        self.axes_diff.set_ylabel("Diff", fontsize=9)
+        self.axes_main.tick_params(axis="both", labelsize=8)
+        self.axes_diff.tick_params(axis="both", labelsize=8)
         self.axes_main.grid(True, color="#e2e8f0", linewidth=0.7)
         self.axes_diff.grid(True, color="#e2e8f0", linewidth=0.7)
         self.base_xlim = self.axes_main.get_xlim()
