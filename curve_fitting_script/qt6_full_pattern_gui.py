@@ -571,12 +571,24 @@ def profile_function(x: np.ndarray, center: float, params: ProfileParams) -> np.
 def profile_window(params: ProfileParams) -> float:
     shape = params.shape.lower()
     if shape == "gaussian":
-        return 6.0 * max(params.sigma, 1e-6)
+        return 8.0 * max(params.sigma, 1e-6)
     if shape == "lorentzian":
-        return 8.0 * max(params.gamma, 1e-6)
+        return 12.0 * max(params.gamma, 1e-6)
     if shape == "pseudo-voigt":
-        return 6.0 * max(params.sigma, params.gamma, 1e-6)
-    return 6.0 * max(params.sigma, params.gamma, 1e-6)
+        return 8.0 * max(params.sigma, params.gamma, 1e-6)
+    return 8.0 * max(params.sigma, params.gamma, 1e-6)
+
+
+def tapered_profile(x: np.ndarray, center: float, params: ProfileParams) -> np.ndarray:
+    window = profile_window(params)
+    if window <= 0:
+        return profile_function(x, center, params)
+    dx = np.abs(x - center)
+    weights = np.zeros_like(x)
+    inside = dx <= window
+    if np.any(inside):
+        weights[inside] = 0.5 * (1.0 + np.cos(np.pi * dx[inside] / window))
+    return profile_function(x, center, params) * weights
 
 
 def build_profile_matrix(
@@ -586,9 +598,17 @@ def build_profile_matrix(
     zero_shift: float,
 ) -> np.ndarray:
     matrix = np.zeros((len(x), len(centers)), dtype=float)
+    window = profile_window(params)
     for col_idx, center in enumerate(centers):
         shifted = center + zero_shift
-        matrix[:, col_idx] = profile_function(x, shifted, params)
+        if window <= 0:
+            matrix[:, col_idx] = profile_function(x, shifted, params)
+            continue
+        dx = np.abs(x - shifted)
+        mask = dx <= window
+        if np.any(mask):
+            weights = 0.5 * (1.0 + np.cos(np.pi * dx[mask] / window))
+            matrix[mask, col_idx] = profile_function(x[mask], shifted, params) * weights
     return matrix
 
 
@@ -737,7 +757,7 @@ def compute_pattern(
         phase_calc = np.zeros_like(x)
         for center, intensity in phase.peaks:
             shifted = center + zero_shift
-            phase_calc += intensity * profile_function(x, shifted, profile)
+            phase_calc += intensity * tapered_profile(x, shifted, profile)
         phase_calc *= phase.scale
         phase_patterns[phase_index] = phase_calc
         calc += phase_calc
